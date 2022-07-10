@@ -11,6 +11,7 @@ vr::EVRInitError ServerTrackedDeviceProvider::Init(vr::IVRDriverContext *pDriver
 
 	InjectHooks(this, pDriverContext);
 	server.Run();
+	shmem.Create(OPENVR_SPACECALIBRATOR_SHMEM_NAME);
 
 	return vr::VRInitError_None;
 }
@@ -19,6 +20,7 @@ void ServerTrackedDeviceProvider::Cleanup()
 {
 	TRACE("ServerTrackedDeviceProvider::Cleanup()");
 	server.Stop();
+	shmem.Close();
 	DisableHooks();
 	VR_CLEANUP_SERVER_DRIVER_CONTEXT();
 }
@@ -56,6 +58,8 @@ void ServerTrackedDeviceProvider::SetDeviceTransform(const protocol::SetDeviceTr
 
 bool ServerTrackedDeviceProvider::HandleDevicePoseUpdated(uint32_t openVRID, vr::DriverPose_t &pose)
 {
+	shmem.SetPose(openVRID, pose);
+
 	auto &tf = transforms[openVRID];
 	if (tf.enabled)
 	{
@@ -70,6 +74,7 @@ bool ServerTrackedDeviceProvider::HandleDevicePoseUpdated(uint32_t openVRID, vr:
 		pose.vecWorldFromDriverTranslation[1] = rotatedTranslation.v[1] + tf.translation.v[1];
 		pose.vecWorldFromDriverTranslation[2] = rotatedTranslation.v[2] + tf.translation.v[2];
 	}
+
 	return true;
 }
 

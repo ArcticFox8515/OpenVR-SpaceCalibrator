@@ -9,7 +9,6 @@
 
 #include <Eigen/Dense>
 
-
 inline vr::HmdQuaternion_t operator*(const vr::HmdQuaternion_t& lhs, const vr::HmdQuaternion_t& rhs) {
 	return {
 		(lhs.w * rhs.w) - (lhs.x * rhs.x) - (lhs.y * rhs.y) - (lhs.z * rhs.z),
@@ -31,12 +30,14 @@ inline Eigen::Matrix3d quaternionRotateMatrix(const vr::HmdQuaternion_t& quat) {
 }
 
 
-static IPCClient Driver;
+IPCClient Driver;
+static protocol::DriverPoseShmem shmem;
 CalibrationContext CalCtx;
 
 void InitCalibrator()
 {
 	Driver.Connect();
+	shmem.Open(OPENVR_SPACECALIBRATOR_SHMEM_NAME);
 }
 
 struct Pose
@@ -236,6 +237,29 @@ Eigen::Vector3d CalibrateTranslation(const std::vector<Sample> &samples)
 	return transcm;
 }
 
+static vr::TrackedDevicePose_t ConvertPose(const vr::DriverPose_t& pose) {
+	vr::TrackedDevicePose_t outPose;
+
+	outPose.bDeviceIsConnected = true;
+	outPose.bPoseIsValid = pose.poseIsValid;
+	outPose.eTrackingResult = pose.result;
+
+	Eigen::Quaterniond rot = Eigen::Quaterniond(pose.qRotation.w, pose.qRotation.x, pose.qRotation.y, pose.qRotation.z);
+	Eigen::Vector3d pos = Eigen::Vector3d(pose.vecPosition[0], pose.vecPosition[1], pose.vecPosition[2]);
+
+	Eigen::AffineCompact3d transform = Eigen::Translation3d(pos) * rot;
+
+	for (int i = 0; i < 3; i++) {
+		for (int j = 0; j < 4; j++) {
+			outPose.mDeviceToAbsoluteTracking.m[i][j] = transform(i, j);
+		}
+		outPose.vAngularVelocity.v[i] = pose.vecAngularVelocity[i];
+		outPose.vVelocity.v[i] = pose.vecVelocity[i];
+	}
+
+	return outPose;
+}
+
 Sample CollectSample(const CalibrationContext &ctx)
 {
 	vr::TrackedDevicePose_t reference, target;
@@ -410,20 +434,26 @@ double RetargetingErrorRMS(
 
 	double errorAccum = 0;
 	int sampleCount = 0;
+
 	for (auto& sample : samples) {
 		if (!sample.valid) continue;
 
 		// Apply transformation
 		const auto updatedPose = ApplyTransform(sample.target, trans, rotMat);
-		const Eigen::Vector4d targetToWorld = Eigen::Vector4d(updatedPose.trans(0), updatedPose.trans(1), updatedPose.trans(2), 1);
+		//const Eigen::Vector4d targetToWorld = Eigen::Vector4d(updatedPose.trans(0), updatedPose.trans(1), updatedPose.trans(2), 1);
 
 		// Now compute it based on the HMD pose offset
-		const Eigen::Vector4d hmdAffine = sample.ref.ToAffine() * hmdToTargetPos;
+		//const Eigen::Vector4d hmdAffine = sample.ref.ToAffine() * hmdToTargetPos;
+		const auto fixedPose = Eigen::Vector3d(hmdToTargetPos(0), hmdToTargetPos(1), hmdToTargetPos(2));
+		const Eigen::Vector3d hmdPoseSpace = sample.ref.rot * fixedPose + sample.ref.trans;
 
 		// Compute error term
-		errorAccum += (hmdAffine - targetToWorld).squaredNorm();
+		double error = (updatedPose.trans - hmdPoseSpace).squaredNorm();
+		errorAccum += error;
 		sampleCount++;
 	}
+
+	printf("=================================================\n");
 
 	return sqrt(errorAccum / sampleCount);
 }
@@ -436,7 +466,7 @@ Eigen::Vector4d DeriveRefToTargetOffset(
 	const auto rotMat = quaternionRotateMatrix(vrRotQuat);
 	const auto trans = Eigen::Vector3d(vrTrans.v);
 
-	Eigen::Vector4d accum = Eigen::Vector4d::Zero();
+	Eigen::Vector3d accum = Eigen::Vector3d::Zero();
 	int sampleCount = 0;
 
 	for (auto& sample : samples) {
@@ -446,18 +476,123 @@ Eigen::Vector4d DeriveRefToTargetOffset(
 		const auto updatedPose = ApplyTransform(sample.target, trans, rotMat);
 
 		// Now move the transform from world to HMD space
+		const auto hmdOriginPos = updatedPose.trans - sample.ref.trans;
+		const auto hmdSpace = sample.ref.rot.inverse() * hmdOriginPos;
+		/*
 		const auto trans4 = Eigen::Vector4d(updatedPose.trans(0), updatedPose.trans(1), updatedPose.trans(2), 1);
-		const auto hmdSpace = sample.ref.ToAffine().inverse() * trans4;
+		const auto hmdSpace = sample.ref.ToAffine().inverse() * trans4;*/
+
+		//char tmpBuf[256];
+		//snprintf(tmpBuf, sizeof tmpBuf, "hmdSpace: [%.2f %.2f %.2f]\n", hmdSpace(0), hmdSpace(1), hmdSpace(2));
+		//OutputDebugStringA(tmpBuf);
 
 		accum += hmdSpace;
 		sampleCount++;
 	}
 
 	accum /= sampleCount;
-	accum(3) = 1; // Ensure we're precisely in affine form
+	//accum(3) = 1; // Ensure we're precisely in affine form
 
-	return accum;
+	return Eigen::Vector4d(accum(0), accum(1), accum(2), 1);
 }
+
+bool ComputeIndependence(
+	CalibrationContext& CalCtx,
+	const std::vector<Sample>& samples,
+	const vr::HmdVector3d_t& vrTrans,
+	const vr::HmdQuaternion_t& vrRotQuat
+) {
+	// We want to determine if the user rotated in enough axis to find a unique solution.
+	// It's sufficient to rotate in two axis - this is because once we constrain the mapping
+	// of those two orthogonal basis vectors, the third is determined by the cross product of
+	// those two basis vectors. So, the question we then have to answer is - after accounting for
+	// translational movement of the HMD itself, are we too close to having only moved on a plane?
+
+	// To determine this, we perform primary component analysis on the tracked device offset relative
+	// to ref position. This means we first have to translate both to world space, then subtract ref
+	// position.
+	std::ostringstream dbgStream;
+
+	std::vector<Eigen::Vector3d> relOffsetPoints;
+	const auto rotMat = quaternionRotateMatrix(vrRotQuat);
+	const auto trans = Eigen::Vector3d(vrTrans.v);
+
+	Eigen::Vector3d mean = Eigen::Vector3d::Zero();
+	double meanDist = 0;
+
+	for (auto &sample : samples) {
+		if (!sample.valid) continue;
+
+		auto point = (rotMat * sample.target.trans + trans) - sample.ref.trans;
+		mean += point;
+		meanDist += point.norm();
+
+		//dbgStream << "Indep: " << point << "\n";
+
+		relOffsetPoints.push_back(point);
+	}
+	mean /= relOffsetPoints.size();
+	meanDist /= relOffsetPoints.size();
+
+	// Compute covariance matrix
+	Eigen::Matrix3d covMatrix = Eigen::Matrix3d::Zero();
+
+	for (auto& sample : relOffsetPoints) {
+		for (int i = 0; i < 3; i++) {
+			for (int j = 0; j < 3; j++) {
+				covMatrix(i, j) += (sample(i) - mean(i)) * (sample(j) - mean(j));
+			}
+		}
+	}
+	covMatrix /= relOffsetPoints.size();
+
+	Eigen::SelfAdjointEigenSolver<Eigen::Matrix3d> solver;
+	solver.compute(covMatrix);
+
+	dbgStream << "[Independence Solver]\nEigenValues: " << solver.eigenvalues() << "\n";
+	dbgStream << "EigenVectors:\n" << solver.eigenvectors() << "\n";
+
+	// Perform change of basis
+	Eigen::Matrix3d basis = solver.eigenvectors().real();
+	for (int i = 0; i < 3; i++) {
+		basis.col(i) = basis.col(i).normalized();
+	}
+
+	Eigen::Matrix3d changeBasis = basis.inverse();
+
+	// Compute standard deviation on each axis
+	Eigen::Vector3d newBasisMean = Eigen::Vector3d::Zero();
+	for (auto& sample : relOffsetPoints) {
+		sample /= meanDist;
+
+		auto inNewBasis = changeBasis * sample;
+		newBasisMean += inNewBasis;
+	}
+	newBasisMean /= relOffsetPoints.size();
+	Eigen::Vector3d sumDeviation = Eigen::Vector3d::Zero();
+	for (auto& sample : relOffsetPoints) {
+		auto inNewBasis = changeBasis * sample;
+		auto diff = newBasisMean - inNewBasis;
+		
+		for (int i = 0; i < 3; i++) {
+			sumDeviation(i) += diff(i) * diff(i);
+		}
+	}
+
+	Eigen::Vector3d stddev = sumDeviation / relOffsetPoints.size();
+
+	dbgStream << "Axis deviation: " << stddev << "\n";
+
+	OutputDebugStringA(dbgStream.str().c_str());
+
+	if (stddev(0) < 0.00005) {
+		CalCtx.Log("Calibration points are nearly coplanar. Try moving around more?\n");
+		return true;
+	}
+
+	return false;
+}
+
 
 /**
  * Determines how sensitive the sampled data is to changes in the calibrated rot/trans values.
@@ -483,24 +618,22 @@ bool ComputeSensitivity(
 	// Compute errors with rotation perturbations
 
 	double deltaError = RetargetingErrorRMS(samples, posOffset, vrTrans, VRRotationQuat(Eigen::Vector3d(10, 0, 0)) * vrRotQuat) - baseError;
-	if (deltaError < 0.2) reject = true;
 
 	snprintf(buf, sizeof buf, "Sensitivity rotation X (RMS error delta): %.2f\n", deltaError);
 	CalCtx.Log(buf);
 
 	deltaError = RetargetingErrorRMS(samples, posOffset, vrTrans, VRRotationQuat(Eigen::Vector3d(0, 10, 0)) * vrRotQuat) - baseError;
-	if (deltaError < 0.2) reject = true;
 
 	snprintf(buf, sizeof buf, "Sensitivity rotation Y (RMS error delta): %.2f\n", deltaError);
 	CalCtx.Log(buf);
 
 	deltaError = RetargetingErrorRMS(samples, posOffset, vrTrans, VRRotationQuat(Eigen::Vector3d(0, 0, 10)) * vrRotQuat) - baseError;
-	if (deltaError < 0.2) reject = true;
 
 	snprintf(buf, sizeof buf, "Sensitivity rotation Z (RMS error delta): %.2f\n", deltaError);
 	CalCtx.Log(buf);
 
-	return reject;
+	ComputeIndependence(CalCtx, samples, vrTrans, vrRotQuat);
+	return reject; 
 }
 
 void StartCalibration()
@@ -608,11 +741,11 @@ void CalibrationTick(double time)
 	{
 		CalCtx.Log("\n");
 
-		ctx.calibratedRotation = CalibrateRotation(samples);
+		auto calibratedRotation = CalibrateRotation(samples);
+		
+		auto vrRotQuat = VRRotationQuat(calibratedRotation);
 
-		auto vrRotQuat = VRRotationQuat(ctx.calibratedRotation);
-
-		static std::vector<Sample> samplesOriginal = samples;
+		std::vector<Sample> samplesOriginal = samples;
 
 		for (auto &sample : samples) {
 			const auto rotMat = quaternionRotateMatrix(vrRotQuat);
@@ -620,9 +753,9 @@ void CalibrationTick(double time)
 			sample.target.trans = rotMat * sample.target.trans;
 		}
 
-		ctx.calibratedTranslation = CalibrateTranslation(samples);
+		auto calibratedTranslation = CalibrateTranslation(samples);
 
-		auto vrTrans = VRTranslationVec(ctx.calibratedTranslation);
+		auto vrTrans = VRTranslationVec(calibratedTranslation);
 
 		if (ComputeSensitivity(CalCtx, samplesOriginal, vrTrans, vrRotQuat)) {
 			CalCtx.Log("\n\n!!! Rejecting low quality calibration !!!\n");
@@ -631,12 +764,18 @@ void CalibrationTick(double time)
 			return;
 		}
 
+		ctx.calibratedRotation = calibratedRotation;
+		ctx.calibratedTranslation = calibratedTranslation;
+
 		protocol::Request req(protocol::RequestSetDeviceTransform);
 		req.setDeviceTransform = { ctx.targetID, true, vrTrans, vrRotQuat };
 		Driver.SendBlocking(req);
 
 		ctx.validProfile = true;
 		SaveProfile(ctx);
+		std::ostringstream oss;
+		oss << "Final rotation: " << ctx.calibratedRotation << "\n";
+		CalCtx.Log(oss.str());
 		CalCtx.Log("Finished calibration, profile saved\n");
 
 		ctx.state = CalibrationState::None;

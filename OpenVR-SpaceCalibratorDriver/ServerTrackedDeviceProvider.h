@@ -1,6 +1,7 @@
 #pragma once
 
 #include "IPCServer.h"
+#include "../Protocol.h"
 
 #include <openvr_driver.h>
 
@@ -40,6 +41,7 @@ public:
 
 private:
 	IPCServer server;
+	protocol::DriverPoseShmem shmem;
 
 	struct DeviceTransform
 	{
