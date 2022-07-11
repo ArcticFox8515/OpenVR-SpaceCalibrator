@@ -87,6 +87,7 @@
   <ItemGroup>
     <ClInclude Include="..\Version.h" />
     <ClInclude Include="Calibration.h" />
+    <ClInclude Include="CalibrationCalc.h" />
     <ClInclude Include="Configuration.h" />
     <ClInclude Include="EmbeddedFiles.h" />
     <ClInclude Include="IPCClient.h" />
@@ -114,6 +115,7 @@
       <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Release|x64'">NotUsing</PrecompiledHeader>
     </ClCompile>
     <ClCompile Include="Calibration.cpp" />
+    <ClCompile Include="CalibrationCalc.cpp" />
     <ClCompile Include="Configuration.cpp" />
     <ClCompile Include="EmbeddedFiles.cpp">
       <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Release|x64'">NotUsing</PrecompiledHeader>
