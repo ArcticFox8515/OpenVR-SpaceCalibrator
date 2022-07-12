@@ -3,6 +3,7 @@
 #include <Eigen/Dense>
 #include <openvr.h>
 #include <vector>
+#include <deque>
 #include <iostream>
 
 struct Pose
@@ -70,12 +71,16 @@ public:
 		return m_samples.size();
 	}
 
+	void ShiftSample() {
+		if (!m_samples.empty()) m_samples.pop_front();
+	}
+
 	CalibrationCalc() : m_isValid(false) {}
 private:
 	bool m_isValid;
 	Eigen::AffineCompact3d m_estimatedTransformation;
 
-	std::vector<Sample> m_samples;
+	std::deque<Sample> m_samples;
 
 	Eigen::Vector3d CalibrateRotation() const;
 	Eigen::Vector3d CalibrateTranslation(const Eigen::Matrix3d &rotation) const;

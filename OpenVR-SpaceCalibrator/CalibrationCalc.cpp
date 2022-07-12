@@ -252,28 +252,7 @@ Eigen::AffineCompact3d CalibrationCalc::ComputeCalibration() const {
 	Eigen::AffineCompact3d rot(rotationMat);
 	Eigen::Translation3d trans(translation);
 
-	auto combined = trans * rot;
-
-	std::ostringstream dbg;
-	dbg << "Combined transform:\n" << combined.matrix() << "\n";
-	dbg << "Original translation mat:\n" << translation << "\n";
-	dbg << "Original rotation mat:\n" << rotationMat << "\n";
-	dbg << "Inv translation:\n" << rotationMat.inverse() * translation << "\n";
-
-	Pose testPose;
-	testPose.rot = Eigen::AngleAxisd(42, Eigen::Vector3d(1, 2, 3).normalized());
-	testPose.trans = Eigen::Vector3d(123, 45, 67);
-
-	Pose p1 = ApplyTransform(testPose, combined);
-	Pose p2 = ApplyTransform(testPose, translation, rotationMat);
-
-
-	dbg << "Old xform result:\n" << p2.rot << "\n\n" << p2.trans << "\n";
-	dbg << "Affine xform result:\n" << p1.rot << "\n\n" << p1.trans << "\n";
-
-	OutputDebugStringA(dbg.str().c_str());
-
-	return combined;
+	return trans * rot;
 }
 
 
@@ -318,15 +297,6 @@ Eigen::Vector3d CalibrationCalc::ComputeRefToTargetOffset(const Eigen::AffineCom
 
 		accum += hmdSpace;
 		sampleCount++;
-
-		char buf[256];
-		snprintf(buf, sizeof buf, "T: (%.2f, %.2f, %.2f) => (%.2f, %.2f, %.2f) | HMD: (%.2f, %.2f, %.2f) | HMDSpace: (%.2f, %.2f, %.2f)\n",
-			sample.target.trans(0), sample.target.trans(1), sample.target.trans(2),
-			updatedPose.trans(0), updatedPose.trans(1), updatedPose.trans(2),
-			sample.ref.trans(0), sample.ref.trans(1), sample.ref.trans(2),
-			hmdSpace(0), hmdSpace(1), hmdSpace(2)
-		);
-		OutputDebugStringA(buf);
 	}
 
 	accum /= sampleCount;
@@ -443,14 +413,38 @@ bool CalibrationCalc::ComputeOneshot() {
 	auto calibration = ComputeCalibration();
 
 	bool valid = ValidateCalibration(calibration);
-	valid = true;
 
 	if (valid) {
 		m_estimatedTransformation = calibration;
+		m_isValid = true;
 		return true;
 	}
 	else {
-		CalCtx.Log("Rejected low-quality calibration result");
+		CalCtx.Log("Not updating: Low-quality calibration result\n");
+		return false;
+	}
+}
+
+bool CalibrationCalc::ComputeIncremental() {
+	auto calibration = ComputeCalibration();
+	
+	bool valid = ValidateCalibration(calibration);
+	
+	if (valid) {
+		if (!m_isValid) {
+			CalCtx.Log("Applying initial transformation...");
+			m_isValid = true;
+			m_estimatedTransformation = calibration;
+		}
+		else {
+			//m_estimatedTransformation = m_estimatedTransformation.matrix() * 0.99 + calibration.matrix() * 0.01;
+			m_isValid = true;
+			m_estimatedTransformation = calibration;
+		}
+
+		return true;
+	}
+	else {
 		return false;
 	}
 }
