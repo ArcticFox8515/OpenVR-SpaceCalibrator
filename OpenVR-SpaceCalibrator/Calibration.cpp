@@ -120,58 +120,70 @@ namespace {
 		return ds;
 	}
 
-	vr::TrackedDevicePose_t ConvertPose(const vr::DriverPose_t& pose) {
-		vr::TrackedDevicePose_t outPose;
+	Pose ConvertPose(const vr::DriverPose_t &driverPose) {
+		Eigen::Quaterniond driverToWorldQ(
+			driverPose.qWorldFromDriverRotation.w,
+			driverPose.qWorldFromDriverRotation.x,
+			driverPose.qWorldFromDriverRotation.y,
+			driverPose.qWorldFromDriverRotation.z
+		);
+		Eigen::Vector3d driverToWorldV(
+			driverPose.vecWorldFromDriverTranslation[0],
+			driverPose.vecWorldFromDriverTranslation[1],
+			driverPose.vecWorldFromDriverTranslation[2]
+		);
 
-		outPose.bDeviceIsConnected = true;
-		outPose.bPoseIsValid = pose.poseIsValid;
-		outPose.eTrackingResult = pose.result;
+		Eigen::Quaterniond driverRot = driverToWorldQ * Eigen::Quaterniond(
+			driverPose.qRotation.w,
+			driverPose.qRotation.x,
+			driverPose.qRotation.y,
+			driverPose.qRotation.z
+		);
+		
+		Eigen::Vector3d driverPos = driverToWorldV + driverToWorldQ * Eigen::Vector3d(
+			driverPose.vecPosition[0],
+			driverPose.vecPosition[1],
+			driverPose.vecPosition[2]
+		);
 
-		Eigen::Quaterniond rot = Eigen::Quaterniond(pose.qRotation.w, pose.qRotation.x, pose.qRotation.y, pose.qRotation.z);
-		Eigen::Vector3d pos = Eigen::Vector3d(pose.vecPosition[0], pose.vecPosition[1], pose.vecPosition[2]);
+		Eigen::AffineCompact3d xform = Eigen::Translation3d(driverPos) * driverRot;
 
-		Eigen::AffineCompact3d transform = Eigen::Translation3d(pos) * rot;
-
-		for (int i = 0; i < 3; i++) {
-			for (int j = 0; j < 4; j++) {
-				outPose.mDeviceToAbsoluteTracking.m[i][j] = transform(i, j);
-			}
-			outPose.vAngularVelocity.v[i] = pose.vecAngularVelocity[i];
-			outPose.vVelocity.v[i] = pose.vecVelocity[i];
-		}
-
-		return outPose;
+		return Pose(xform);
 	}
 
-	Sample CollectSample(const CalibrationContext& ctx)
+	bool CollectSample(const CalibrationContext& ctx)
 	{
-		vr::TrackedDevicePose_t reference, target;
-		reference.bPoseIsValid = false;
-		target.bPoseIsValid = false;
+		vr::DriverPose_t reference, target;
+		reference.poseIsValid = false;
+		target.poseIsValid = false;
 
 		reference = ctx.devicePoses[ctx.referenceID];
 		target = ctx.devicePoses[ctx.targetID];
 
 		bool ok = true;
-		if (!reference.bPoseIsValid)
+		if (!reference.poseIsValid)
 		{
 			CalCtx.Log("Reference device is not tracking\n"); ok = false;
 		}
-		if (!target.bPoseIsValid)
+		if (!target.poseIsValid)
 		{
 			CalCtx.Log("Target device is not tracking\n"); ok = false;
 		}
 		if (!ok)
 		{
-			CalCtx.Log("Aborting calibration!\n");
-			CalCtx.state = CalibrationState::None;
-			return Sample();
+			if (CalCtx.state != CalibrationState::Continuous) {
+				CalCtx.Log("Aborting calibration!\n");
+				CalCtx.state = CalibrationState::None;
+			}
+			return false;
 		}
 
-		return Sample(
-			Pose(reference.mDeviceToAbsoluteTracking),
-			Pose(target.mDeviceToAbsoluteTracking)
-		);
+		calibration.PushSample(Sample(
+			ConvertPose(reference),
+			ConvertPose(target)
+		));
+
+		return true;
 	}
 }
 
@@ -302,12 +314,18 @@ void CalibrationTick(double time)
 	if (!vr::VRSystem())
 		return;
 
+	
+
 	auto &ctx = CalCtx;
 	if ((time - ctx.timeLastTick) < 0.05)
 		return;
 
 	ctx.timeLastTick = time;
-	vr::VRSystem()->GetDeviceToAbsoluteTrackingPose(vr::TrackingUniverseRawAndUncalibrated, 0.0f, ctx.devicePoses, vr::k_unMaxTrackedDeviceCount);
+	shmem.ReadNewPoses([&](const protocol::DriverPoseShmem::AugmentedPose& augmented_pose) {
+		if (augmented_pose.deviceId >= 0 && augmented_pose.deviceId <= vr::k_unMaxTrackedDeviceCount) {
+			ctx.devicePoses[augmented_pose.deviceId] = augmented_pose.pose;
+		}
+	});
 
 	if (ctx.state == CalibrationState::None)
 	{
@@ -351,7 +369,7 @@ void CalibrationTick(double time)
 		{
 			CalCtx.Log("Missing reference device\n"); ok = false;
 		}
-		else if (!ctx.devicePoses[ctx.referenceID].bPoseIsValid)
+		else if (!ctx.devicePoses[ctx.referenceID].poseIsValid)
 		{
 			CalCtx.Log("Reference device is not tracking\n"); ok = false;
 		}
@@ -360,15 +378,18 @@ void CalibrationTick(double time)
 		{
 			CalCtx.Log("Missing target device\n"); ok = false;
 		}
-		else if (!ctx.devicePoses[ctx.targetID].bPoseIsValid)
+		else if (!ctx.devicePoses[ctx.targetID].poseIsValid)
 		{
 			CalCtx.Log("Target device is not tracking\n"); ok = false;
 		}
 
 		if (!ok)
 		{
-			ctx.state = CalibrationState::None;
-			CalCtx.Log("Aborting calibration!\n");
+			if (ctx.state != CalibrationState::Continuous) {
+				ctx.state = CalibrationState::None;
+
+				CalCtx.Log("Aborting calibration!\n");
+			}
 			return;
 		}
 
@@ -380,23 +401,31 @@ void CalibrationTick(double time)
 		return;
 	}
 
-	auto sample = CollectSample(ctx);
-	if (!sample.valid)
+	if (!CollectSample(ctx))
 	{
 		return;
 	}
 
-	calibration.PushSample(sample);
-
 	CalCtx.Progress(calibration.SampleCount(), CalCtx.SampleCount());
+
+	while (calibration.SampleCount() > CalCtx.SampleCount()) calibration.ShiftSample();
 
 	if (calibration.SampleCount() >= CalCtx.SampleCount())
 	{
-		CalCtx.Log("\n");
-
 		LARGE_INTEGER start_time;
 		QueryPerformanceCounter(&start_time);
-		if (calibration.ComputeOneshot()) {
+		
+		bool ok;
+
+		if (CalCtx.state == CalibrationState::Continuous) {
+			CalCtx.messages.clear();
+			ok = calibration.ComputeIncremental();
+		}
+		else {
+			ok = calibration.ComputeOneshot();
+		}
+
+		if (calibration.isValid()) {
 			ctx.calibratedRotation = calibration.EulerRotation();
 			ctx.calibratedTranslation = calibration.Transformation().translation() * 100.0; // convert to cm units for profile storage
 
@@ -410,13 +439,15 @@ void CalibrationTick(double time)
 			ctx.validProfile = true;
 			SaveProfile(ctx);
 
+			ScanAndApplyProfile(ctx);
+
 			CalCtx.Log("Finished calibration, profile saved\n");
 		}
 		else
 		{
-			CalCtx.Log("Calibration failed.");
+			CalCtx.Log("Calibration failed.\n");
 		}
-		ctx.state = CalibrationState::None;
+
 		LARGE_INTEGER end_time;
 		QueryPerformanceCounter(&end_time);
 		LARGE_INTEGER freq;
@@ -427,7 +458,13 @@ void CalibrationTick(double time)
 		
 		CalCtx.Log(buf);
 
-		calibration.Clear();
+		if (CalCtx.state != CalibrationState::Continuous) {
+			ctx.state = CalibrationState::None;
+			calibration.Clear();
+		}
+		else {
+			for (int i = 0; i < 10; i++) calibration.ShiftSample();
+		}
 	}
 }
 

@@ -437,9 +437,7 @@ bool CalibrationCalc::ComputeIncremental() {
 			m_estimatedTransformation = calibration;
 		}
 		else {
-			//m_estimatedTransformation = m_estimatedTransformation.matrix() * 0.99 + calibration.matrix() * 0.01;
-			m_isValid = true;
-			m_estimatedTransformation = calibration;
+			m_estimatedTransformation = m_estimatedTransformation.matrix() * 0.9 + calibration.matrix() * 0.1;
 		}
 
 		return true;

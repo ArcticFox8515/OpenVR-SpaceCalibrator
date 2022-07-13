@@ -1,8 +1,12 @@
 #pragma once
 
 #include <Eigen/Core>
+#include <Windows.h>
 #include <openvr.h>
 #include <vector>
+#include <deque>
+
+#include "../Protocol.h"
 
 enum class CalibrationState
 {
@@ -11,6 +15,7 @@ enum class CalibrationState
 	Rotation,
 	Translation,
 	Editing,
+	Continuous,
 };
 
 struct CalibrationContext
@@ -38,7 +43,7 @@ struct CalibrationContext
 	};
 	Speed calibrationSpeed = FAST;
 
-	vr::TrackedDevicePose_t devicePoses[vr::k_unMaxTrackedDeviceCount];
+	vr::DriverPose_t devicePoses[vr::k_unMaxTrackedDeviceCount];
 
 	struct Chaperone
 	{
@@ -93,15 +98,19 @@ struct CalibrationContext
 		int progress, target;
 	};
 
-	std::vector<Message> messages;
+	std::deque<Message> messages;
 
 	void Log(const std::string &msg)
 	{
 		if (messages.empty() || messages.back().type == Message::Progress)
 			messages.push_back(Message(Message::String));
 
+		OutputDebugStringA(msg.c_str());
+
 		messages.back().str += msg;
 		std::cerr << msg;
+
+		while (messages.size() > 15) messages.pop_front();
 	}
 
 	void Progress(int current, int target)

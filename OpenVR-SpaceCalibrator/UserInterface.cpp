@@ -69,7 +69,26 @@ void BuildMenu(bool runningInOverlay)
 	ImGuiStyle &style = ImGui::GetStyle();
 	ImGui::Text("");
 
-	if (CalCtx.state == CalibrationState::None)
+	if (CalCtx.state == CalibrationState::Continuous) {
+		float width = ImGui::GetWindowContentRegionWidth(), scale = 1.0f;
+
+		if (ImGui::Button("Cancel Continuous Calibration", ImVec2(width * scale, ImGui::GetTextLineHeight() * 2))) {
+			CalCtx.state = CalibrationState::None;
+		}
+
+		// Status field...
+
+		ImGui::PushStyleColor(ImGuiCol_FrameBg, (ImVec4)ImColor(0, 0, 0));
+
+		for (const auto& msg : CalCtx.messages) {
+			if (msg.type == CalibrationContext::Message::String) {
+				ImGui::TextWrapped("> %s", msg.str.c_str());
+			}
+		}
+
+		ImGui::PopStyleColor();
+	}
+	else if (CalCtx.state == CalibrationState::None)
 	{
 		if (CalCtx.validProfile && !CalCtx.enabled)
 		{
@@ -81,13 +100,19 @@ void BuildMenu(bool runningInOverlay)
 		if (CalCtx.validProfile)
 		{
 			width -= style.FramePadding.x * 4.0f;
-			scale = 1.0f / 3.0f;
+			scale = 1.0f / 4.0f;
 		}
 
 		if (ImGui::Button("Start Calibration", ImVec2(width * scale, ImGui::GetTextLineHeight() * 2)))
 		{
 			ImGui::OpenPopup("Calibration Progress");
 			StartCalibration();
+		}
+
+		ImGui::SameLine();
+		if (ImGui::Button("Continuous Calibration", ImVec2(width * scale, ImGui::GetTextLineHeight() * 2))) {
+			StartCalibration();
+			CalCtx.state = CalibrationState::Continuous;
 		}
 
 		if (CalCtx.validProfile)
