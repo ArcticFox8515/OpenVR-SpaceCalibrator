@@ -381,7 +381,7 @@ Eigen::Vector3d CalibrationCalc::ComputeIndependence(
 
 }
 
-bool CalibrationCalc::ValidateCalibration(const Eigen::AffineCompact3d &calibration) {
+bool CalibrationCalc::ValidateCalibration(const Eigen::AffineCompact3d &calibration, double *error) {
 	bool ok = true;
 
 	auto stddev = ComputeIndependence(calibration);
@@ -402,9 +402,11 @@ bool CalibrationCalc::ValidateCalibration(const Eigen::AffineCompact3d &calibrat
 	CalCtx.Log(buf);
 
 	double rmsError = RetargetingErrorRMS(posOffset, calibration);
-	snprintf(buf, sizeof buf, "Position error (RMS): %.2f\n", rmsError);
+	snprintf(buf, sizeof buf, "Position error (RMS): %.3f\n", rmsError);
 	CalCtx.Log(buf);
 	if (rmsError > 0.1) ok = false;
+
+	if (error) *error = rmsError;
 
 	return ok;
 }
@@ -425,20 +427,39 @@ bool CalibrationCalc::ComputeOneshot() {
 	}
 }
 
-bool CalibrationCalc::ComputeIncremental() {
+bool CalibrationCalc::ComputeIncremental(bool &lerp) {
 	auto calibration = ComputeCalibration();
 	
-	bool valid = ValidateCalibration(calibration);
+	double newError, priorCalibrationError;
+	bool valid = ValidateCalibration(calibration, &newError);
+
+	// Use stricter thresholds for continuous calibration to limit jitter
+	valid = valid && newError < 0.005;
+
+	priorCalibrationError = INFINITY;
+	if (m_isValid) {
+		ValidateCalibration(m_estimatedTransformation, &priorCalibrationError);
+		bool oldCalibrationBetter = m_isValid && priorCalibrationError < newError * 4;
+		char tmp[256];
+		snprintf(tmp, sizeof tmp, "Prior calibration error: %.3f (valid: %s); new error %.3f; new better? %s\n",
+			priorCalibrationError, m_isValid ? "yes" : "no", newError, !oldCalibrationBetter ? "yes" : "no");
+		CalCtx.Log(tmp);
+		
+		// If we have a more noisy calibration than before, avoid updating.
+		if (oldCalibrationBetter) return false;
+	}
 	
 	if (valid) {
+		lerp = m_isValid;
 		if (!m_isValid) {
 			CalCtx.Log("Applying initial transformation...");
-			m_isValid = true;
-			m_estimatedTransformation = calibration;
 		}
 		else {
-			m_estimatedTransformation = m_estimatedTransformation.matrix() * 0.9 + calibration.matrix() * 0.1;
+			CalCtx.Log("Applying updated transformation...");
 		}
+		
+		m_isValid = true;
+		m_estimatedTransformation = calibration;
 
 		return true;
 	}

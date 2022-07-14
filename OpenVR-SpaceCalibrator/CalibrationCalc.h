@@ -74,7 +74,7 @@ public:
 	void Clear();
 
 	bool ComputeOneshot();
-	bool ComputeIncremental();
+	bool ComputeIncremental(bool &lerp);
 
 	size_t SampleCount() const {
 		return m_samples.size();
@@ -101,6 +101,6 @@ private:
 
 	Eigen::Vector3d ComputeIndependence(const Eigen::AffineCompact3d& calibration) const;
 
-	bool ValidateCalibration(const Eigen::AffineCompact3d& calibration);
+	bool ValidateCalibration(const Eigen::AffineCompact3d& calibration, double *errorOut = nullptr);
 
 };

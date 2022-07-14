@@ -92,7 +92,7 @@ namespace vr {
 
 namespace protocol
 {
-	const uint32_t Version = 2;
+	const uint32_t Version = 3;
 
 	enum RequestType
 	{
@@ -123,24 +123,26 @@ namespace protocol
 		vr::HmdVector3d_t translation;
 		vr::HmdQuaternion_t rotation;
 		double scale;
+		bool lerp;
+		bool quash;
 
 		SetDeviceTransform(uint32_t id, bool enabled) :
-			openVRID(id), enabled(enabled), updateTranslation(false), updateRotation(false), updateScale(false) { }
+			openVRID(id), enabled(enabled), updateTranslation(false), updateRotation(false), updateScale(false), lerp(false), quash(false) { }
 
 		SetDeviceTransform(uint32_t id, bool enabled, vr::HmdVector3d_t translation) :
-			openVRID(id), enabled(enabled), updateTranslation(true), updateRotation(false), updateScale(false), translation(translation) { }
+			openVRID(id), enabled(enabled), updateTranslation(true), updateRotation(false), updateScale(false), translation(translation), lerp(false), quash(false) { }
 
 		SetDeviceTransform(uint32_t id, bool enabled, vr::HmdQuaternion_t rotation) :
-			openVRID(id), enabled(enabled), updateTranslation(false), updateRotation(true), updateScale(false), rotation(rotation) { }
+			openVRID(id), enabled(enabled), updateTranslation(false), updateRotation(true), updateScale(false), rotation(rotation), lerp(false), quash(false) { }
 
 		SetDeviceTransform(uint32_t id, bool enabled, double scale) :
-			openVRID(id), enabled(enabled), updateTranslation(false), updateRotation(false), updateScale(true), scale(scale) { }
+			openVRID(id), enabled(enabled), updateTranslation(false), updateRotation(false), updateScale(true), scale(scale), lerp(false), quash(false) { }
 
 		SetDeviceTransform(uint32_t id, bool enabled, vr::HmdVector3d_t translation, vr::HmdQuaternion_t rotation) :
-			openVRID(id), enabled(enabled), updateTranslation(true), updateRotation(true), updateScale(false), translation(translation), rotation(rotation) { }
+			openVRID(id), enabled(enabled), updateTranslation(true), updateRotation(true), updateScale(false), translation(translation), rotation(rotation), lerp(false), quash(false) { }
 
 		SetDeviceTransform(uint32_t id, bool enabled, vr::HmdVector3d_t translation, vr::HmdQuaternion_t rotation, double scale) :
-			openVRID(id), enabled(enabled), updateTranslation(true), updateRotation(true), updateScale(true), translation(translation), rotation(rotation), scale(scale) { }
+			openVRID(id), enabled(enabled), updateTranslation(true), updateRotation(true), updateScale(true), translation(translation), rotation(rotation), scale(scale), lerp(false), quash(false) { }
 	};
 
 	struct Request

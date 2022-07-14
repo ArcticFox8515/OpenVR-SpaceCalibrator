@@ -3,6 +3,8 @@
 #include "IPCServer.h"
 #include "../Protocol.h"
 
+#include <Eigen/Dense>
+
 #include <openvr_driver.h>
 
 class ServerTrackedDeviceProvider : public vr::IServerTrackedDeviceProvider
@@ -46,9 +48,11 @@ private:
 	struct DeviceTransform
 	{
 		bool enabled = false;
-		vr::HmdVector3d_t translation;
-		vr::HmdQuaternion_t rotation;
+		bool quash = false;
+		Eigen::Vector3d translation, targetTranslation;
+		Eigen::Quaterniond rotation, targetRotation;
 		double scale;
+		LARGE_INTEGER lastPoll;
 	};
 
 	DeviceTransform transforms[vr::k_unMaxTrackedDeviceCount];

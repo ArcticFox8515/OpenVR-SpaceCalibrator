@@ -284,6 +284,9 @@ void ScanAndApplyProfile(CalibrationContext &ctx)
 			VRRotationQuat(ctx.calibratedRotation),
 			ctx.calibratedScale
 		};
+		req.setDeviceTransform.lerp = CalCtx.state == CalibrationState::Continuous;
+		req.setDeviceTransform.quash = CalCtx.state == CalibrationState::Continuous && id == CalCtx.targetID;
+
 		Driver.SendBlocking(req);
 	}
 
@@ -393,7 +396,7 @@ void CalibrationTick(double time)
 			return;
 		}
 
-		ResetAndDisableOffsets(ctx.targetID);
+		//ResetAndDisableOffsets(ctx.targetID);
 		ctx.state = CalibrationState::Rotation;
 		ctx.wantedUpdateInterval = 0.0;
 
@@ -415,11 +418,11 @@ void CalibrationTick(double time)
 		LARGE_INTEGER start_time;
 		QueryPerformanceCounter(&start_time);
 		
-		bool ok;
+		bool ok, lerp = false;
 
 		if (CalCtx.state == CalibrationState::Continuous) {
 			CalCtx.messages.clear();
-			ok = calibration.ComputeIncremental();
+			ok = calibration.ComputeIncremental(lerp);
 		}
 		else {
 			ok = calibration.ComputeOneshot();
@@ -431,10 +434,6 @@ void CalibrationTick(double time)
 
 			auto vrTrans = VRTranslationVec(ctx.calibratedTranslation);
 			auto vrRot = VRRotationQuat(Eigen::Quaterniond(calibration.Transformation().rotation()));
-
-			protocol::Request req(protocol::RequestSetDeviceTransform);
-			req.setDeviceTransform = { ctx.targetID, true, vrTrans, vrRot };
-			Driver.SendBlocking(req);
 
 			ctx.validProfile = true;
 			SaveProfile(ctx);
