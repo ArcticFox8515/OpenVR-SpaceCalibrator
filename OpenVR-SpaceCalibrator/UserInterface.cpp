@@ -43,8 +43,8 @@ void BuildMainWindow(bool runningInOverlay)
 {
 	auto &io = ImGui::GetIO();
 
-	ImGui::SetNextWindowPos(ImVec2(0.0f, 0.0f), ImGuiSetCond_Always);
-	ImGui::SetNextWindowSize(io.DisplaySize, ImGuiSetCond_Always);
+	ImGui::SetNextWindowPos(ImVec2(0.0f, 0.0f), ImGuiCond_Always);
+	ImGui::SetNextWindowSize(io.DisplaySize, ImGuiCond_Always);
 
 	if (!ImGui::Begin("MainWindow", nullptr, bareWindowFlags))
 	{
@@ -55,6 +55,7 @@ void BuildMainWindow(bool runningInOverlay)
 	ImGui::PushStyleColor(ImGuiCol_PlotHistogram, ImGui::GetStyleColorVec4(ImGuiCol_Button));
 
 	auto state = LoadVRState();
+	
 	BuildSystemSelection(state);
 	BuildDeviceSelections(state);
 	BuildMenu(runningInOverlay);
@@ -78,7 +79,7 @@ void BuildMenu(bool runningInOverlay)
 
 		// Status field...
 
-		ImGui::PushStyleColor(ImGuiCol_FrameBg, (ImVec4)ImColor(0, 0, 0));
+		ImGui::PushStyleColor(ImGuiCol_FrameBg, ImVec4(0, 0, 0, 1));
 
 		for (const auto& msg : CalCtx.messages) {
 			if (msg.type == CalibrationContext::Message::String) {
@@ -92,7 +93,7 @@ void BuildMenu(bool runningInOverlay)
 	{
 		if (CalCtx.validProfile && !CalCtx.enabled)
 		{
-			ImGui::TextColored(ImColor(0.8f, 0.2f, 0.2f), "Reference (%s) HMD not detected, profile disabled", CalCtx.referenceTrackingSystem.c_str());
+			ImGui::TextColored(ImVec4(0.8f, 0.2f, 0.2f, 1), "Reference (%s) HMD not detected, profile disabled", CalCtx.referenceTrackingSystem.c_str());
 			ImGui::Text("");
 		}
 
@@ -195,8 +196,8 @@ void BuildMenu(bool runningInOverlay)
 		ImGui::Button("Calibration in progress...", ImVec2(ImGui::GetWindowContentRegionWidth(), ImGui::GetTextLineHeight() * 2));
 	}
 
-	ImGui::SetNextWindowPos(ImVec2(10.0f, ImGui::GetWindowHeight() - ImGui::GetItemsLineHeightWithSpacing()));
-	ImGui::BeginChild("bottom line", ImVec2(ImGui::GetWindowWidth() - 20.0f, ImGui::GetItemsLineHeightWithSpacing() * 2), false);
+	ImGui::SetNextWindowPos(ImVec2(10.0f, ImGui::GetWindowHeight() - ImGui::GetFrameHeightWithSpacing()));
+	ImGui::BeginChild("bottom line", ImVec2(ImGui::GetWindowWidth() - 20.0f, ImGui::GetFrameHeightWithSpacing() * 2), false);
 	ImGui::Text("OpenVR Space Calibrator v" SPACECAL_VERSION_STRING " - by tach/pushrax");
 	if (runningInOverlay)
 	{
@@ -205,11 +206,11 @@ void BuildMenu(bool runningInOverlay)
 	}
 	ImGui::EndChild();
 
-	ImGui::SetNextWindowPos(ImVec2(20.0f, 20.0f), ImGuiSetCond_Always);
-	ImGui::SetNextWindowSize(ImVec2(io.DisplaySize.x - 40.0f, io.DisplaySize.y - 40.0f), ImGuiSetCond_Always);
+	ImGui::SetNextWindowPos(ImVec2(20.0f, 20.0f), ImGuiCond_Always);
+	ImGui::SetNextWindowSize(ImVec2(io.DisplaySize.x - 40.0f, io.DisplaySize.y - 40.0f), ImGuiCond_Always);
 	if (ImGui::BeginPopupModal("Calibration Progress", nullptr, bareWindowFlags))
 	{
-		ImGui::PushStyleColor(ImGuiCol_FrameBg, (ImVec4)ImColor(0, 0, 0));
+		ImGui::PushStyleColor(ImGuiCol_FrameBg, (ImVec4)ImVec4(0, 0, 0, 1));
 		for (auto &message : CalCtx.messages)
 		{
 			switch (message.type)
@@ -341,7 +342,7 @@ std::string LabelString(const VRDevice &device)
 
 void BuildDeviceSelection(const VRState &state, int &selected, const std::string &system)
 {
-	ImGui::TextColored(ImColor(0.5f, 0.5f, 0.5f), "Devices from: %s", system.c_str());
+	ImGui::TextColored(ImVec4(0.5f, 0.5f, 0.5f, 1), "Devices from: %s", system.c_str());
 
 	if (selected != -1)
 	{

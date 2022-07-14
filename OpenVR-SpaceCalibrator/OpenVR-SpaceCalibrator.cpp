@@ -5,6 +5,7 @@
 #include "UserInterface.h"
 
 #include <imgui/imgui.h>
+#include <imgui/imgui_internal.h>
 #include <imgui/imgui_impl_glfw.h>
 #include <imgui/imgui_impl_opengl3.h>
 #include <GL/gl3w.h>
@@ -202,6 +203,8 @@ void InitVR()
 	ActivateMultipleDrivers();
 }
 
+static char textBuf[0x400];
+
 void RunLoop()
 {
 	while (!glfwWindowShouldClose(glfwWindow))
@@ -241,14 +244,18 @@ void RunLoop()
 			}
 			else if (io.WantTextInput && !keyboardOpen && !keyboardJustClosed)
 			{
-				char buf[0x400];
-				ImGui::GetActiveText(buf, sizeof buf);
-				buf[0x3ff] = 0;
+				int id = ImGui::GetActiveID();
+				auto textInfo = ImGui::GetInputTextState(id);
+
+				textBuf[0] = 0;
+				int len = WideCharToMultiByte(CP_ACP, 0, (LPCWCH)textInfo->TextW.Data, textInfo->TextW.Size, textBuf, sizeof(textBuf), NULL, NULL);
+				textBuf[min(len, sizeof(textBuf) - 1)] = 0;
+				
 				uint32_t unFlags = 0; // EKeyboardFlags 
 
 				vr::VROverlay()->ShowKeyboardForOverlay(
 					overlayMainHandle, vr::k_EGamepadTextInputModeNormal, vr::k_EGamepadTextInputLineModeSingleLine,
-					unFlags, "Space Calibrator Overlay", sizeof buf, buf, 0
+					unFlags, "Space Calibrator Overlay", sizeof textBuf, textBuf, 0
 				);
 				keyboardOpen = true;
 			}
@@ -272,9 +279,16 @@ void RunLoop()
 					io.MouseWheel += vrEvent.data.scroll.ydelta * 360.0f * 8.0f;
 					break;
 				case vr::VREvent_KeyboardDone: {
-					char buf[0x400];
-					vr::VROverlay()->GetKeyboardText(buf, sizeof buf);
-					ImGui::SetActiveText(buf, sizeof buf);
+					vr::VROverlay()->GetKeyboardText(textBuf, sizeof textBuf);
+
+					int id = ImGui::GetActiveID();
+					auto textInfo = ImGui::GetInputTextState(id);
+					int bufSize = MultiByteToWideChar(CP_ACP, 0, textBuf, -1, NULL, 0);
+					textInfo->TextW.resize(bufSize);
+					MultiByteToWideChar(CP_ACP, 0, textBuf, -1, (LPWSTR)textInfo->TextW.Data, bufSize);
+					textInfo->CurLenW = bufSize;
+					textInfo->CurLenA = WideCharToMultiByte(CP_UTF8, 0, (LPCWCH)textInfo->TextW.Data, textInfo->TextW.Size, NULL, 0, NULL, NULL);
+					
 					keyboardJustClosed = true;
 					break;
 				}
@@ -284,9 +298,13 @@ void RunLoop()
 			}
 		}
 
-		ImGui::GetIO().DisplaySize = ImVec2((float) fboTextureWidth, (float) fboTextureHeight);
+		auto io = ImGui::GetIO();
+		io.DisplaySize = ImVec2((float) fboTextureWidth, (float) fboTextureHeight);
 
-		ImGui_ImplGlfw_SetReadMouseFromGlfw(!dashboardVisible);
+		io.ConfigFlags = io.ConfigFlags & ~ImGuiConfigFlags_NoMouseCursorChange;
+		if (dashboardVisible) {
+			io.ConfigFlags = io.ConfigFlags | ImGuiConfigFlags_NoMouseCursorChange;
+		}
 		ImGui_ImplOpenGL3_NewFrame();
 		ImGui_ImplGlfw_NewFrame();
 		ImGui::NewFrame();
