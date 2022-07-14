@@ -386,7 +386,7 @@ bool CalibrationCalc::ValidateCalibration(const Eigen::AffineCompact3d &calibrat
 
 	auto stddev = ComputeIndependence(calibration);
 	std::ostringstream oss;
-	oss << "Axis deviation: " << stddev << "\n";
+	oss << "Axis deviation: " << stddev(0) << " " << stddev(1) << " " << stddev(2) << "\n";
 	CalCtx.Log(oss.str());
 	oss.clear();
 

@@ -55,9 +55,10 @@ void BuildMainWindow(bool runningInOverlay)
 	ImGui::PushStyleColor(ImGuiCol_PlotHistogram, ImGui::GetStyleColorVec4(ImGuiCol_Button));
 
 	auto state = LoadVRState();
-	
+	ImGui::BeginDisabled(CalCtx.state == CalibrationState::Continuous);
 	BuildSystemSelection(state);
 	BuildDeviceSelections(state);
+	ImGui::EndDisabled();
 	BuildMenu(runningInOverlay);
 
 	ImGui::PopStyleColor();
