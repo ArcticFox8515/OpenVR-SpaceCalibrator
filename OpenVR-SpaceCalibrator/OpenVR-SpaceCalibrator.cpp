@@ -265,19 +265,21 @@ void RunLoop()
 			{
 				switch (vrEvent.eventType) {
 				case vr::VREvent_MouseMove:
-					io.MousePos.x = vrEvent.data.mouse.x;
-					io.MousePos.y = vrEvent.data.mouse.y;
+					io.AddMousePosEvent(vrEvent.data.mouse.x, vrEvent.data.mouse.y);
 					break;
 				case vr::VREvent_MouseButtonDown:
-					io.MouseDown[vrEvent.data.mouse.button == vr::VRMouseButton_Left ? 0 : 1] = true;
+					io.AddMouseButtonEvent(vrEvent.data.mouse.button == vr::VRMouseButton_Left ? 0 : 1, true);
 					break;
 				case vr::VREvent_MouseButtonUp:
-					io.MouseDown[vrEvent.data.mouse.button == vr::VRMouseButton_Left ? 0 : 1] = false;
+					io.AddMouseButtonEvent(vrEvent.data.mouse.button == vr::VRMouseButton_Left ? 0 : 1, false);
 					break;
 				case vr::VREvent_ScrollDiscrete:
-					io.MouseWheelH += vrEvent.data.scroll.xdelta * 360.0f * 8.0f;
-					io.MouseWheel += vrEvent.data.scroll.ydelta * 360.0f * 8.0f;
+				{
+					double x = vrEvent.data.scroll.xdelta * 360.0f * 8.0f;
+					double y = vrEvent.data.scroll.ydelta * 360.0f * 8.0f;
+					io.AddMouseWheelEvent(x, y);
 					break;
+				}
 				case vr::VREvent_KeyboardDone: {
 					vr::VROverlay()->GetKeyboardText(textBuf, sizeof textBuf);
 
@@ -298,8 +300,9 @@ void RunLoop()
 			}
 		}
 
-		auto io = ImGui::GetIO();
+		auto &io = ImGui::GetIO();
 		io.DisplaySize = ImVec2((float) fboTextureWidth, (float) fboTextureHeight);
+		io.DisplayFramebufferScale = ImVec2(1.0f, 1.0f);
 
 		io.ConfigFlags = io.ConfigFlags & ~ImGuiConfigFlags_NoMouseCursorChange;
 		if (dashboardVisible) {
