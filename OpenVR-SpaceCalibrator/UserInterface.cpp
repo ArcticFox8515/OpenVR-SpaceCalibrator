@@ -55,6 +55,7 @@ void BuildMainWindow(bool runningInOverlay)
 	ImGui::PushStyleColor(ImGuiCol_PlotHistogram, ImGui::GetStyleColorVec4(ImGuiCol_Button));
 
 	auto state = LoadVRState();
+
 	ImGui::BeginDisabled(CalCtx.state == CalibrationState::Continuous);
 	BuildSystemSelection(state);
 	BuildDeviceSelections(state);
@@ -75,8 +76,10 @@ void BuildMenu(bool runningInOverlay)
 		float width = ImGui::GetWindowContentRegionWidth(), scale = 1.0f;
 
 		if (ImGui::Button("Cancel Continuous Calibration", ImVec2(width * scale, ImGui::GetTextLineHeight() * 2))) {
-			CalCtx.state = CalibrationState::None;
+			EndContinuousCalibration();
 		}
+
+		ImGui::Checkbox("Hide target device from application", &CalCtx.quashTargetInContinuous);
 
 		// Status field...
 
@@ -113,8 +116,7 @@ void BuildMenu(bool runningInOverlay)
 
 		ImGui::SameLine();
 		if (ImGui::Button("Continuous Calibration", ImVec2(width * scale, ImGui::GetTextLineHeight() * 2))) {
-			StartCalibration();
-			CalCtx.state = CalibrationState::Continuous;
+			StartContinuousCalibration();
 		}
 
 		if (CalCtx.validProfile)
@@ -276,7 +278,15 @@ void BuildSystemSelection(const VRState &state)
 
 	if (currentReferenceSystem == -1 && CalCtx.referenceTrackingSystem == "")
 	{
-		currentReferenceSystem = firstReferenceSystemNotTargetSystem;
+		if (CalCtx.state == CalibrationState::ContinuousStandby) {
+			auto iter = std::find(state.trackingSystems.begin(), state.trackingSystems.end(), CalCtx.referenceStandby.trackingSystem);
+			if (iter != state.trackingSystems.end()) {
+				currentReferenceSystem = iter - state.trackingSystems.begin();
+			}
+		}
+		else {
+			currentReferenceSystem = firstReferenceSystemNotTargetSystem;
+		}
 	}
 
 	ImGui::PushItemWidth(paneWidth);
@@ -289,8 +299,17 @@ void BuildSystemSelection(const VRState &state)
 			CalCtx.targetTrackingSystem = "";
 	}
 
-	if (CalCtx.targetTrackingSystem == "")
-		currentTargetSystem = 0;
+	if (CalCtx.targetTrackingSystem == "") {
+		if (CalCtx.state == CalibrationState::ContinuousStandby) {
+			auto iter = std::find(state.trackingSystems.begin(), state.trackingSystems.end(), CalCtx.targetStandby.trackingSystem);
+			if (iter != state.trackingSystems.end()) {
+				currentTargetSystem = iter - state.trackingSystems.begin();
+			}
+		}
+		else {
+			currentTargetSystem = 0;
+		}
+	}
 
 	std::vector<const char *> targetSystems;
 	for (auto &str : state.trackingSystems)
@@ -341,8 +360,19 @@ std::string LabelString(const VRDevice &device)
 	return label;
 }
 
-void BuildDeviceSelection(const VRState &state, int &selected, const std::string &system)
+std::string LabelString(const StandbyDevice& device) {
+	std::string label("< ");
+
+	label += device.model;
+	AppendSeparated(label, device.serial);
+
+	label += " >";
+	return label;
+}
+
+void BuildDeviceSelection(const VRState &state, int &initialSelected, const std::string &system, StandbyDevice &standbyDevice)
 {
+	int selected = initialSelected;
 	ImGui::TextColored(ImVec4(0.5f, 0.5f, 0.5f, 1), "Devices from: %s", system.c_str());
 
 	if (selected != -1)
@@ -367,7 +397,9 @@ void BuildDeviceSelection(const VRState &state, int &selected, const std::string
 		}
 	}
 
-	if (selected == -1)
+	bool standby = CalCtx.state == CalibrationState::ContinuousStandby;
+
+	if (selected == -1 && !standby)
 	{
 		for (auto &device : state.devices)
 		{
@@ -380,6 +412,36 @@ void BuildDeviceSelection(const VRState &state, int &selected, const std::string
 				break;
 			}
 		}
+
+		if (selected == -1) {
+			for (auto& device : state.devices)
+			{
+				if (device.trackingSystem != system)
+					continue;
+				
+				selected = device.id;
+				break;
+			}
+		}
+	}
+
+	if (selected == -1 && standby) {
+		for (auto& device : state.devices)
+		{
+			if (device.trackingSystem != system)
+				continue;
+
+			if (standbyDevice.model != device.model) continue;
+			if (standbyDevice.serial != device.serial) continue;
+
+			selected = device.id;
+			break;
+		}
+
+		if (selected == -1) {
+			auto label = LabelString(standbyDevice);
+			ImGui::Selectable(label.c_str(), true);
+		}
 	}
 
 	for (auto &device : state.devices)
@@ -387,12 +449,19 @@ void BuildDeviceSelection(const VRState &state, int &selected, const std::string
 		if (device.trackingSystem != system)
 			continue;
 
-		if (selected == -1)
-			selected = device.id;
-
 		auto label = LabelString(device);
-		if (ImGui::Selectable(label.c_str(), selected == device.id))
+		if (ImGui::Selectable(label.c_str(), selected == device.id)) {
 			selected = device.id;
+		}
+	}
+	if (selected != initialSelected) {
+		const auto& device = std::find_if(state.devices.begin(), state.devices.end(), [&](const auto& d) { return d.id == selected; });
+		if (device == state.devices.end()) return;
+
+		initialSelected = selected;
+		standbyDevice.trackingSystem = system;
+		standbyDevice.model = device->model;
+		standbyDevice.serial = device->serial;
 	}
 }
 
@@ -402,17 +471,13 @@ void BuildDeviceSelections(const VRState &state)
 	ImVec2 paneSize(ImGui::GetWindowContentRegionWidth() / 2 - style.FramePadding.x, ImGui::GetTextLineHeightWithSpacing() * 5 + style.ItemSpacing.y * 4);
 
 	ImGui::BeginChild("left device pane", paneSize, true);
-	static int selectedRefDevice = -1;
-	BuildDeviceSelection(state, selectedRefDevice, CalCtx.referenceTrackingSystem);
-	CalCtx.referenceID = selectedRefDevice;
+	BuildDeviceSelection(state, CalCtx.referenceID, CalCtx.referenceTrackingSystem, CalCtx.referenceStandby);
 	ImGui::EndChild();
 
 	ImGui::SameLine();
 
 	ImGui::BeginChild("right device pane", paneSize, true);
-	static int selectedCalDevice = -1;
-	BuildDeviceSelection(state, selectedCalDevice, CalCtx.targetTrackingSystem);
-	CalCtx.targetID = selectedCalDevice;
+	BuildDeviceSelection(state, CalCtx.targetID, CalCtx.targetTrackingSystem, CalCtx.targetStandby);
 	ImGui::EndChild();
 
 	if (ImGui::Button("Identify selected devices (blinks LED or vibrates)", ImVec2(ImGui::GetWindowContentRegionWidth(), ImGui::GetTextLineHeightWithSpacing() + 4.0f)))
@@ -473,12 +538,25 @@ VRState LoadVRState()
 				device.serial = std::string(buffer);
 
 				device.controllerRole = (vr::ETrackedControllerRole) vr::VRSystem()->GetInt32TrackedDeviceProperty(id, vr::Prop_ControllerRoleHint_Int32, &err);
+
 				state.devices.push_back(device);
 			}
 			else
 			{
 				printf("failed to get tracking system name for id %d\n", id);
 			}
+		}
+	}
+
+	if (CalCtx.state == CalibrationState::ContinuousStandby) {
+		auto existing = std::find(trackingSystems.begin(), trackingSystems.end(), CalCtx.referenceTrackingSystem);
+		if (existing == trackingSystems.end()) {
+			trackingSystems.push_back(CalCtx.referenceTrackingSystem);
+		}
+
+		existing = std::find(trackingSystems.begin(), trackingSystems.end(), CalCtx.targetTrackingSystem);
+		if (existing == trackingSystems.end()) {
+			trackingSystems.push_back(CalCtx.targetTrackingSystem);
 		}
 	}
 

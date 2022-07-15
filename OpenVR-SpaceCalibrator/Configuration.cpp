@@ -32,6 +32,20 @@ static void LoadFloatArray(const picojson::value &obj, float *buf, int numFloats
 		buf[i] = (float) arr[i].get<double>();
 }
 
+static void LoadStandby(StandbyDevice& device, picojson::value& value) {
+	if (!value.is<picojson::object>()) return;
+	auto& obj = value.get<picojson::object>();
+	
+	const auto &system = obj["tracking_system"];
+	if (system.is<std::string>()) device.trackingSystem = system.get<std::string>();
+
+	const auto& model = obj["model"];
+	if (model.is<std::string>()) device.model = model.get<std::string>();
+
+	const auto& serial = obj["serial"];
+	if (serial.is<std::string>()) device.serial = serial.get<std::string>();
+}
+
 static void ParseProfile(CalibrationContext &ctx, std::istream &stream)
 {
 	picojson::value v;
@@ -53,6 +67,12 @@ static void ParseProfile(CalibrationContext &ctx, std::istream &stream)
 	ctx.calibratedTranslation(0) = obj["x"].get<double>();
 	ctx.calibratedTranslation(1) = obj["y"].get<double>();
 	ctx.calibratedTranslation(2) = obj["z"].get<double>();
+	LoadStandby(ctx.referenceStandby, obj["reference_device"]);
+	LoadStandby(ctx.targetStandby, obj["target_device"]);
+	if (obj["autostart_continuous_calibration"].evaluate_as_boolean()) {
+		ctx.state = CalibrationState::ContinuousStandby;
+	}
+	ctx.quashTargetInContinuous = obj["quash_target_in_continuous"].evaluate_as_boolean();
 
 	if (obj["scale"].is<double>())
 		ctx.calibratedScale = obj["scale"].get<double>();
@@ -92,6 +112,18 @@ static void ParseProfile(CalibrationContext &ctx, std::istream &stream)
 	ctx.validProfile = true;
 }
 
+
+static void WriteStandby(StandbyDevice& device, picojson::value& value) {
+	auto obj = picojson::object();
+
+	obj["tracking_system"].set<std::string>(device.trackingSystem);
+	obj["model"].set<std::string>(device.model);
+	obj["serial"].set<std::string>(device.serial);
+
+	value.set<picojson::object>(obj);
+}
+
+
 static void WriteProfile(CalibrationContext &ctx, std::ostream &out)
 {
 	if (!ctx.validProfile)
@@ -107,6 +139,11 @@ static void WriteProfile(CalibrationContext &ctx, std::ostream &out)
 	profile["y"].set<double>(ctx.calibratedTranslation(1));
 	profile["z"].set<double>(ctx.calibratedTranslation(2));
 	profile["scale"].set<double>(ctx.calibratedScale);
+	WriteStandby(ctx.referenceStandby, profile["reference_device"]);
+	WriteStandby(ctx.targetStandby, profile["target_device"]);
+	bool isInContinuousCalibrationMode = ctx.state == CalibrationState::Continuous || ctx.state == CalibrationState::ContinuousStandby;
+	profile["autostart_continuous_calibration"].set<bool>(isInContinuousCalibrationMode);
+	profile["quash_target_in_continuous"].set<bool>(ctx.quashTargetInContinuous);
 
 	double speed = (int) ctx.calibrationSpeed;
 	profile["calibration_speed"].set<double>(speed);

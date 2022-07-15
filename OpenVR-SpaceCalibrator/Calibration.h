@@ -16,12 +16,20 @@ enum class CalibrationState
 	Translation,
 	Editing,
 	Continuous,
+	ContinuousStandby,
+};
+
+struct StandbyDevice {
+	std::string trackingSystem;
+	std::string model, serial;
 };
 
 struct CalibrationContext
 {
 	CalibrationState state = CalibrationState::None;
-	uint32_t referenceID, targetID;
+	int32_t referenceID = -1, targetID = -1;
+
+	StandbyDevice targetStandby, referenceStandby;
 
 	Eigen::Vector3d calibratedRotation;
 	Eigen::Vector3d calibratedTranslation;
@@ -32,6 +40,8 @@ struct CalibrationContext
 
 	bool enabled = false;
 	bool validProfile = false;
+	bool clearOnLog = false;
+	bool quashTargetInContinuous = false;
 	double timeLastTick = 0, timeLastScan = 0;
 	double wantedUpdateInterval = 1.0;
 
@@ -53,6 +63,10 @@ struct CalibrationContext
 		vr::HmdMatrix34_t standingCenter;
 		vr::HmdVector2_t playSpaceSize;
 	} chaperone;
+
+	void ClearLogOnMessage() {
+		clearOnLog = true;
+	}
 
 	void Clear()
 	{
@@ -102,6 +116,11 @@ struct CalibrationContext
 
 	void Log(const std::string &msg)
 	{
+		if (clearOnLog) {
+			messages.clear();
+			clearOnLog = false;
+		}
+
 		if (messages.empty() || messages.back().type == Message::Progress)
 			messages.push_back(Message(Message::String));
 
@@ -128,5 +147,7 @@ extern CalibrationContext CalCtx;
 void InitCalibrator();
 void CalibrationTick(double time);
 void StartCalibration();
+void StartContinuousCalibration();
+void EndContinuousCalibration();
 void LoadChaperoneBounds();
 void ApplyChaperoneBounds();

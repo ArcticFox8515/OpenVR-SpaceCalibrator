@@ -59,9 +59,6 @@
     <ClCompile Include="..\lib\imgui\imgui.cpp">
       <Filter>Source Files\ImGui</Filter>
     </ClCompile>
-    <ClCompile Include="..\lib\imgui\imgui_demo.cpp">
-      <Filter>Source Files\ImGui</Filter>
-    </ClCompile>
     <ClCompile Include="..\lib\imgui\imgui_impl_glfw.cpp">
       <Filter>Source Files\ImGui</Filter>
     </ClCompile>

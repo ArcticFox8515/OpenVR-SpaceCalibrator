@@ -285,7 +285,7 @@ void ScanAndApplyProfile(CalibrationContext &ctx)
 			ctx.calibratedScale
 		};
 		req.setDeviceTransform.lerp = CalCtx.state == CalibrationState::Continuous;
-		req.setDeviceTransform.quash = CalCtx.state == CalibrationState::Continuous && id == CalCtx.targetID;
+		req.setDeviceTransform.quash = CalCtx.state == CalibrationState::Continuous && id == CalCtx.targetID && CalCtx.quashTargetInContinuous;
 
 		Driver.SendBlocking(req);
 	}
@@ -312,16 +312,29 @@ void StartCalibration()
 	calibration.Clear();
 }
 
+void StartContinuousCalibration() {
+	StartCalibration();
+	CalCtx.state = CalibrationState::Continuous;
+	CalCtx.Log("Collecting initial samples...");
+}
+
+void EndContinuousCalibration() {
+	CalCtx.state = CalibrationState::None;
+	SaveProfile(CalCtx);
+}
+
 void CalibrationTick(double time)
 {
 	if (!vr::VRSystem())
 		return;
 
-	
-
 	auto &ctx = CalCtx;
 	if ((time - ctx.timeLastTick) < 0.05)
 		return;
+
+	if (ctx.state == CalibrationState::Continuous || ctx.state == CalibrationState::ContinuousStandby) {
+		ctx.ClearLogOnMessage();
+	}
 
 	ctx.timeLastTick = time;
 	shmem.ReadNewPoses([&](const protocol::DriverPoseShmem::AugmentedPose& augmented_pose) {
@@ -329,6 +342,17 @@ void CalibrationTick(double time)
 			ctx.devicePoses[augmented_pose.deviceId] = augmented_pose.pose;
 		}
 	});
+
+	if (ctx.state == CalibrationState::ContinuousStandby) {
+		if (ctx.targetID >= 0 && ctx.referenceID >= 0) {
+			StartContinuousCalibration();
+		}
+		else {
+			ctx.wantedUpdateInterval = 0.5;
+			ctx.Log("Waiting for devices...");
+			return;
+		}
+	}
 
 	if (ctx.state == CalibrationState::None)
 	{
@@ -354,11 +378,23 @@ void CalibrationTick(double time)
 		return;
 	}
 
+	bool ok = true;
+
+	if (ctx.referenceID == -1 || ctx.referenceID >= vr::k_unMaxTrackedDeviceCount) {
+		CalCtx.Log("Missing reference device\n");
+		ok = false;
+	}
+	if (ctx.targetID == -1 || ctx.targetID >= vr::k_unMaxTrackedDeviceCount)
+	{
+		CalCtx.Log("Missing target device\n");
+		ok = false;
+	}
+
 	if (ctx.state == CalibrationState::Begin)
 	{
-		bool ok = true;
 
 		char referenceSerial[256], targetSerial[256];
+		referenceSerial[0] = targetSerial[0] = 0;
 		vr::VRSystem()->GetStringTrackedDeviceProperty(ctx.referenceID, vr::Prop_SerialNumber_String, referenceSerial, 256);
 		vr::VRSystem()->GetStringTrackedDeviceProperty(ctx.targetID, vr::Prop_SerialNumber_String, targetSerial, 256);
 
@@ -368,39 +404,34 @@ void CalibrationTick(double time)
 		snprintf(buf, sizeof buf, "Target device ID: %d, serial %s\n", ctx.targetID, targetSerial);
 		CalCtx.Log(buf);
 
-		if (ctx.referenceID == -1)
-		{
-			CalCtx.Log("Missing reference device\n"); ok = false;
-		}
-		else if (!ctx.devicePoses[ctx.referenceID].poseIsValid)
+		if (!ctx.devicePoses[ctx.referenceID].poseIsValid)
 		{
 			CalCtx.Log("Reference device is not tracking\n"); ok = false;
 		}
 
-		if (ctx.targetID == -1)
-		{
-			CalCtx.Log("Missing target device\n"); ok = false;
-		}
-		else if (!ctx.devicePoses[ctx.targetID].poseIsValid)
+		if (!ctx.devicePoses[ctx.targetID].poseIsValid)
 		{
 			CalCtx.Log("Target device is not tracking\n"); ok = false;
 		}
 
-		if (!ok)
-		{
-			if (ctx.state != CalibrationState::Continuous) {
-				ctx.state = CalibrationState::None;
 
-				CalCtx.Log("Aborting calibration!\n");
-			}
+		if (ok) {
+			//ResetAndDisableOffsets(ctx.targetID);
+			ctx.state = CalibrationState::Rotation;
+			ctx.wantedUpdateInterval = 0.0;
+
+			CalCtx.Log("Starting calibration...\n");
 			return;
 		}
+	}
 
-		//ResetAndDisableOffsets(ctx.targetID);
-		ctx.state = CalibrationState::Rotation;
-		ctx.wantedUpdateInterval = 0.0;
+	if (!ok)
+	{
+		if (ctx.state != CalibrationState::Continuous) {
+			ctx.state = CalibrationState::None;
 
-		CalCtx.Log("Starting calibration...\n");
+			CalCtx.Log("Aborting calibration!\n");
+		}
 		return;
 	}
 
