@@ -72,7 +72,7 @@ void BuildMenu(bool runningInOverlay)
 	ImGuiStyle &style = ImGui::GetStyle();
 	ImGui::Text("");
 
-	if (CalCtx.state == CalibrationState::Continuous) {
+	if (CalCtx.state == CalibrationState::Continuous || CalCtx.state == CalibrationState::ContinuousStandby) {
 		float width = ImGui::GetWindowContentRegionWidth(), scale = 1.0f;
 
 		if (ImGui::Button("Cancel Continuous Calibration", ImVec2(width * scale, ImGui::GetTextLineHeight() * 2))) {
