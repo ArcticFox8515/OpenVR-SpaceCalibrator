@@ -99,7 +99,7 @@ private:
 	double RetargetingErrorRMS(const Eigen::Vector3d& hmdToTargetPos, const Eigen::AffineCompact3d& calibration) const;
 	Eigen::Vector3d ComputeRefToTargetOffset(const Eigen::AffineCompact3d& calibration) const;
 
-	Eigen::Vector3d ComputeIndependence(const Eigen::AffineCompact3d& calibration) const;
+	Eigen::Vector4d ComputeAxisVariance(const Eigen::AffineCompact3d& calibration) const;
 
 	bool ValidateCalibration(const Eigen::AffineCompact3d& calibration, double *errorOut = nullptr);
 

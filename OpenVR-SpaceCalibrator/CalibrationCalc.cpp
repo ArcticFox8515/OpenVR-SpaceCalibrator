@@ -304,7 +304,7 @@ Eigen::Vector3d CalibrationCalc::ComputeRefToTargetOffset(const Eigen::AffineCom
 	return accum;
 }
 
-Eigen::Vector3d CalibrationCalc::ComputeIndependence(
+Eigen::Vector4d CalibrationCalc::ComputeAxisVariance(
 	const Eigen::AffineCompact3d& calibration
 ) const {
 	// We want to determine if the user rotated in enough axis to find a unique solution.
@@ -313,84 +313,56 @@ Eigen::Vector3d CalibrationCalc::ComputeIndependence(
 	// those two basis vectors. So, the question we then have to answer is - after accounting for
 	// translational movement of the HMD itself, are we too close to having only moved on a plane?
 
-	// To determine this, we perform primary component analysis on the tracked device offset relative
-	// to ref position. This means we first have to translate both to world space, then subtract ref
-	// position.
+	// To determine this, we perform primary component analysis on the rotation quaternions themselves.
+	// Since an angle axis quaternion is defined as the sum of Qidentity*cos(angle/2) + Qaxis*sin(angle/2),
+	// we expect that rotations around a single axis will have two primary components: One corresponding
+	// to the identity component, and one to the axis component. Thus, we check the variance (eigenvalue) of
+	// the third primary component to see if we've moved in two axis.
 	std::ostringstream dbgStream;
 
-	std::vector<Eigen::Vector3d> relOffsetPoints;
+	std::vector<Eigen::Vector4d> points;
 
-	Eigen::Vector3d mean = Eigen::Vector3d::Zero();
-	double meanDist = 0;
+	Eigen::Vector4d mean = Eigen::Vector4d::Zero();
 
 	for (auto& sample : m_samples) {
 		if (!sample.valid) continue;
 
-		auto point = (calibration * sample.target.trans) - sample.ref.trans;
+		auto q = Eigen::Quaterniond(sample.target.rot);
+		auto point = Eigen::Vector4d(q.w(), q.x(), q.y(), q.z());
 		mean += point;
-		meanDist += point.norm();
 
-		relOffsetPoints.push_back(point);
+		points.push_back(point);
 	}
-	mean /= relOffsetPoints.size();
-	meanDist /= relOffsetPoints.size();
+	mean /= points.size();
 
 	// Compute covariance matrix
-	Eigen::Matrix3d covMatrix = Eigen::Matrix3d::Zero();
+	Eigen::Matrix4d covMatrix = Eigen::Matrix4d::Zero();
 
-	for (auto& sample : relOffsetPoints) {
-		for (int i = 0; i < 3; i++) {
-			for (int j = 0; j < 3; j++) {
-				covMatrix(i, j) += (sample(i) - mean(i)) * (sample(j) - mean(j));
+	for (auto& point : points) {
+		for (int i = 0; i < 4; i++) {
+			for (int j = 0; j < 4; j++) {
+				covMatrix(i, j) += (point(i) - mean(i)) * (point(j) - mean(j));
 			}
 		}
 	}
-	covMatrix /= relOffsetPoints.size();
+	covMatrix /= points.size();
 
-	Eigen::SelfAdjointEigenSolver<Eigen::Matrix3d> solver;
+	Eigen::SelfAdjointEigenSolver<Eigen::Matrix4d> solver;
 	solver.compute(covMatrix);
 
-	// Perform change of basis
-	Eigen::Matrix3d basis = solver.eigenvectors().real();
-	for (int i = 0; i < 3; i++) {
-		basis.col(i) = basis.col(i).normalized();
-	}
-
-	Eigen::Matrix3d changeBasis = basis.inverse();
-
-	// Compute standard deviation on each axis
-	Eigen::Vector3d newBasisMean = Eigen::Vector3d::Zero();
-	for (auto& sample : relOffsetPoints) {
-		sample /= meanDist;
-
-		auto inNewBasis = changeBasis * sample;
-		newBasisMean += inNewBasis;
-	}
-	newBasisMean /= relOffsetPoints.size();
-	Eigen::Vector3d sumDeviation = Eigen::Vector3d::Zero();
-	for (auto& sample : relOffsetPoints) {
-		auto inNewBasis = changeBasis * sample;
-		auto diff = newBasisMean - inNewBasis;
-
-		for (int i = 0; i < 3; i++) {
-			sumDeviation(i) += diff(i) * diff(i);
-		}
-	}
-
-	return sumDeviation / relOffsetPoints.size();
-
+	return solver.eigenvalues();
 }
 
 bool CalibrationCalc::ValidateCalibration(const Eigen::AffineCompact3d &calibration, double *error) {
 	bool ok = true;
 
-	auto stddev = ComputeIndependence(calibration);
+	auto variance = ComputeAxisVariance(calibration);
 	std::ostringstream oss;
-	oss << "Axis deviation: " << stddev(0) << " " << stddev(1) << " " << stddev(2) << "\n";
+	oss << "Axis variance: " << variance(0) << " " << variance(1) << " " << variance(2) << " " << variance(3) << "\n";
 	CalCtx.Log(oss.str());
 	oss.clear();
 
-	if (stddev(0) < 0.00005) {
+	if (variance(1) < 0.00005) {
 		CalCtx.Log("Calibration points are nearly coplanar. Try moving around more?\n");
 		ok = false;
 	}
