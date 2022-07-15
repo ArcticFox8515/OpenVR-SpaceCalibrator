@@ -122,7 +122,14 @@ bool ServerTrackedDeviceProvider::HandleDevicePoseUpdated(uint32_t openVRID, vr:
 			lerp = 1.0;
 		if (lerp < 0 || isnan(lerp))
 			lerp = 0;
+		// Cancel out any translation induced by this rotation slerp. This helps avoid your
+		// controllers/trackers flying away when far from the origin and a rotation correction
+		// is performed.
+		auto priorPos = tf.rotation * convert(pose.vecPosition);
 		tf.rotation = tf.rotation.slerp(lerp, tf.targetRotation);
+		auto newPos = tf.rotation * convert(pose.vecPosition);
+		tf.translation -= newPos - priorPos;
+
 		tf.translation = tf.translation * (1 - lerp) + tf.targetTranslation * lerp;
 		tf.lastPoll = timestamp;
 		
