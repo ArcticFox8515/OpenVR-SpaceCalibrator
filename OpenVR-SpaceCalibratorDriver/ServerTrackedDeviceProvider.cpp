@@ -105,10 +105,8 @@ bool ServerTrackedDeviceProvider::HandleDevicePoseUpdated(uint32_t openVRID, vr:
 	auto& tf = transforms[openVRID];
 
 	if (tf.quash) {
-		pose.poseIsValid = false;
-		pose.result = vr::TrackingResult_Running_OutOfRange;
 		pose.vecPosition[0] = -pose.vecWorldFromDriverTranslation[0];
-		pose.vecPosition[1] = -pose.vecWorldFromDriverTranslation[1];
+		pose.vecPosition[1] = -pose.vecWorldFromDriverTranslation[1] + 9001; // put it 9001m above the origin
 		pose.vecPosition[2] = -pose.vecWorldFromDriverTranslation[2];
 	} else if (tf.enabled)
 	{
