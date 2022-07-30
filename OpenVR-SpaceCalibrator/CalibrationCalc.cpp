@@ -362,7 +362,7 @@ bool CalibrationCalc::ValidateCalibration(const Eigen::AffineCompact3d &calibrat
 	CalCtx.Log(oss.str());
 	oss.clear();
 
-	if (variance(1) < 0.00005) {
+	if (variance(1) < 0.0005) {
 		CalCtx.Log("Calibration points are nearly coplanar. Try moving around more?\n");
 		ok = false;
 	}
