@@ -110,5 +110,5 @@ private:
 	Eigen::Vector4d ComputeAxisVariance(const Eigen::AffineCompact3d& calibration) const;
 
 	bool ValidateCalibration(const Eigen::AffineCompact3d& calibration, double *errorOut = nullptr, Eigen::Vector3d* posOffsetV = nullptr);
-
+	void ComputeInstantOffset();
 };

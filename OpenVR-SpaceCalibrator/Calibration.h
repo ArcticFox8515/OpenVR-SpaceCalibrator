@@ -153,5 +153,4 @@ void LoadChaperoneBounds();
 void ApplyChaperoneBounds();
 
 void PushCalibrationApplyTime();
-void PushCalibrationDebugData(const class CalibrationCalc& calc);
-void ShowCalibrationDebug();
+void ShowCalibrationDebug(int r, int c);

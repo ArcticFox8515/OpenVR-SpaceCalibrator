@@ -1,5 +1,6 @@
 #include "CalibrationCalc.h"
 #include "Calibration.h"
+#include "CalibrationMetrics.h"
 #include "..\Protocol.h"
 
 inline vr::HmdQuaternion_t operator*(const vr::HmdQuaternion_t& lhs, const vr::HmdQuaternion_t& rhs) {
@@ -357,18 +358,6 @@ Eigen::Vector4d CalibrationCalc::ComputeAxisVariance(
 bool CalibrationCalc::ValidateCalibration(const Eigen::AffineCompact3d &calibration, double *error, Eigen::Vector3d *posOffsetV) {
 	bool ok = true;
 
-	auto variance = ComputeAxisVariance(calibration);
-	//std::ostringstream oss;
-	//oss << "Axis variance: " << variance(0) << " " << variance(1) << " " << variance(2) << " " << variance(3) << "\n";
-	//CalCtx.Log(oss.str());
-	//oss.clear();
-	m_axisVariance = variance(1);
-
-	if (m_axisVariance < AxisVarianceThreshold) {
-		//CalCtx.Log("Calibration points are nearly coplanar. Try moving around more?\n");
-		ok = false;
-	}
-
 	const auto posOffset = ComputeRefToTargetOffset(calibration);
 	char buf[256];
 	if (posOffsetV) *posOffsetV = posOffset;
@@ -402,22 +391,56 @@ bool CalibrationCalc::ComputeOneshot() {
 	}
 }
 
+void CalibrationCalc::ComputeInstantOffset() {
+	const auto &latestSample = m_samples.back();
+
+	// Apply transformation
+	const auto updatedPose = ApplyTransform(latestSample.target, m_estimatedTransformation);
+
+	// Now move the transform from world to HMD space
+	const auto hmdOriginPos = updatedPose.trans - latestSample.ref.trans;
+	const auto hmdSpace = latestSample.ref.rot.inverse() * hmdOriginPos;
+	
+	Metrics::posOffset_lastSample.Push(hmdSpace * 1000);
+}
+
 bool CalibrationCalc::ComputeIncremental(bool &lerp) {
-	m_calcCycle++;
+	Metrics::RecordTimestamp();
 
 	auto calibration = ComputeCalibration();
-	
+
+	bool valid = true;
+	auto variance = ComputeAxisVariance(calibration);
+	//std::ostringstream oss;
+	//oss << "Axis variance: " << variance(0) << " " << variance(1) << " " << variance(2) << " " << variance(3) << "\n";
+	//CalCtx.Log(oss.str());
+	//oss.clear();
+	m_axisVariance = variance(1);
+
+	if (m_axisVariance < AxisVarianceThreshold) {
+		//CalCtx.Log("Calibration points are nearly coplanar. Try moving around more?\n");
+		valid = false;
+	}
+	Metrics::axisIndependence.Push(m_axisVariance);
+
 	double newError, priorCalibrationError;
-	bool valid = ValidateCalibration(calibration, &newError, &m_posOffset);
+	valid = valid && ValidateCalibration(calibration, &newError, &m_posOffset);
 	m_newCalRMS = newError;
+	Metrics::posOffset_rawComputed.Push(m_posOffset * 1000);
+	Metrics::error_rawComputed.Push(newError * 1000);
 
 	// Use stricter thresholds for continuous calibration to limit jitter
 	valid = valid && newError < 0.005;
 
 	priorCalibrationError = INFINITY;
-	ValidateCalibration(m_estimatedTransformation, &priorCalibrationError);
+	Eigen::Vector3d priorPosOffset;
+	ValidateCalibration(m_estimatedTransformation, &priorCalibrationError, &priorPosOffset);
 	m_oldCalRMS = priorCalibrationError;
+	Metrics::posOffset_currentCal.Push(priorPosOffset * 1000);
+	Metrics::error_currentCal.Push(priorCalibrationError * 1000);
 
+	ComputeInstantOffset();
+	
 	bool ok = valid;
 	
 	static int stableCt;

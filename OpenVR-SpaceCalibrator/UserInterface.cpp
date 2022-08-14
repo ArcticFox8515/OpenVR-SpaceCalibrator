@@ -113,6 +113,12 @@ void BuildContinuousCalDisplay() {
 			CCal_BasicInfo();
 			ImGui::EndTabItem();
 		}
+
+		if (ImGui::BeginTabItem("More Graphs")) {
+			ShowCalibrationDebug(2, 3);
+			ImGui::EndTabItem();
+		}
+		ImGui::EndTabBar();
 	}
 
 	ImGui::EndChild();
@@ -172,7 +178,7 @@ void CCal_BasicInfo() {
 
 	ImGui::PopStyleColor();
 
-	ShowCalibrationDebug();
+	ShowCalibrationDebug(1, 3);
 }
 
 void BuildMenu(bool runningInOverlay)

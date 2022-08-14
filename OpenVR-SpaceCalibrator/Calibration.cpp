@@ -465,7 +465,6 @@ void CalibrationTick(double time)
 		if (CalCtx.state == CalibrationState::Continuous) {
 			CalCtx.messages.clear();
 			ok = calibration.ComputeIncremental(lerp);
-			PushCalibrationDebugData(calibration);
 
 			if (ok) PushCalibrationApplyTime();
 		}

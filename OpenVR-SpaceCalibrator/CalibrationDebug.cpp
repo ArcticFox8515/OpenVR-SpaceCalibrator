@@ -4,95 +4,82 @@
 
 #include <implot/implot.h>
 #include "CalibrationCalc.h"
+#include "CalibrationMetrics.h"
 #include "UserInterface.h"
-
+// ImPlotPoint (*ImPlotGetter)(void* user_data, int idx);
 namespace {
-	const int LOG_LENGTH_MS = 300 * 1000;
-	
-	struct CalibrationStep {
-		double timestamp;
-
-		Eigen::Vector3d posOffset;
-		double m_newCalRMS, m_oldCalRMS, m_axisVariance;
-	};
-
-
-	long long ts_start = ~0LL;
-	double TimeSpan = 30;
-
-	struct Buffer {
-		std::vector<ImVec2> Data;
-
-		int firstValid = 0;
-
-		void Push(double t, double d) {
-			Data.push_back(ImVec2(t, d));
-
-			while (firstValid < Data.size() && Data[firstValid].x < t - TimeSpan) {
-				firstValid++;
-			}
-
-			if (firstValid > Data.size() / 2) {
-				Data.erase(Data.begin(), Data.begin() + firstValid);
-				firstValid = 0;
-			}
-		}
-	};
-
-	std::vector<double> calibrationAppliedTime;
-
-	Buffer pos_offset_x, pos_offset_y, pos_offset_z, newCalRMS, oldCalRMS, axisVariance;
-
-	long lastCycle = 0;
 	double refTime;
 
-	double timestamp() {
-		LARGE_INTEGER ts, freq;
-		QueryPerformanceCounter(&ts);
-		QueryPerformanceFrequency(&freq);
-
-		if (ts_start == ~0LL) ts_start = ts.QuadPart;
-
-		ts.QuadPart -= ts_start;
-
-		return ts.QuadPart / (double)freq.QuadPart;
-	}
-
-	ImPlotPoint BufferGetter(void* data, int index) {
-		Buffer* buf = (Buffer*)data;
-		return ImPlotPoint(buf->Data[index].x - refTime, buf->Data[index].y);
-	}
-
-	ImPlotPoint FetchBelowThreshold(void* data, int index) {
-		auto point = BufferGetter(data, index);
-
-		if (point.y > CalibrationCalc::AxisVarianceThreshold)
-			point.y = CalibrationCalc::AxisVarianceThreshold;
-
+	template<typename F>
+	ImPlotPoint VPIndexer(void* ptr, int idx) {
+		auto point = (*reinterpret_cast<const F*>(ptr))(idx);
+		point.x -= refTime;
 		return point;
 	}
 
-	ImPlotPoint FetchAboveThreshold(void* data, int index) {
-		auto point = BufferGetter(data, index);
+	template<typename F>
+	void PlotLineG(const char* name, const F& f, int points) {
+		const void* vp_f = &f;
 
-		if (point.y < CalibrationCalc::AxisVarianceThreshold)
-			point.y = CalibrationCalc::AxisVarianceThreshold;
+		if (points > 0) {
+			ImPlot::PlotLineG(name, VPIndexer<F>, const_cast<void*>(vp_f), points);
+		}
+		else {
+			double x = -INFINITY;
+			double y = 0;
+			ImPlot::PlotLine(name, &x, &y, 1);
+		}
+	}
+	
+	template<typename F, typename G>
+	void PlotShadedG(const char* name, const F& data, const G& reference, int count) {
+		const void* vp_data = &data;
+		const void* vp_reference = &reference;
 
-		return point;
+		if (count > 0) {
+			ImPlot::PlotShadedG(name,
+				VPIndexer<F>, const_cast<void*>(vp_data),
+				VPIndexer<G>, const_cast<void*>(vp_reference),
+				count
+			);
+		}
+		else {
+			double x = -INFINITY;
+			double y = 0;
+			ImPlot::PlotShaded(name, &x, &y, &y, 1);
+		}
 	}
 
-	ImPlotPoint VarianceRef(void* data, int index) {
-		auto point = BufferGetter(data, index);
-		point.y = CalibrationCalc::AxisVarianceThreshold;
-			
-		return point;
+	void PlotLineG(const char* name, const Metrics::TimeSeries<double>& ts) {
+		PlotLineG(name, [&](int index) {
+				const auto& p = ts[index];
+				return ImPlotPoint(p.first, p.second);
+			},
+			ts.size()
+		);
 	}
 
-	ImPlotPoint ZeroRef(void* data, int index) {
-		auto point = BufferGetter(data, index);
-		point.y = 0;
+	void PlotVector(const char* namePrefix, const Metrics::TimeSeries<Eigen::Vector3d>& ts) {
+		std::string name(namePrefix);
+		name += "X";
+		PlotLineG(name.c_str(), [&](int index) {
+			const auto& p = ts[index];
+			return ImPlotPoint(p.first, p.second(0));
+		}, ts.size());
 
-		return point;
+		name.pop_back();
+		name += "Y";
+		PlotLineG(name.c_str(), [&](int index) {
+			const auto& p = ts[index];
+			return ImPlotPoint(p.first, p.second(1));
+		}, ts.size());
+
+		name.pop_back();
+		name += "Z";
+		PlotLineG(name.c_str(), [&](int index) {
+			const auto& p = ts[index];
+			return ImPlotPoint(p.first, p.second(2));
+		}, ts.size());
 	}
 
 	double lastMouseX = -INFINITY;
@@ -102,15 +89,20 @@ namespace {
 
 	void PrepApplyTicks() {
 		calAppliedTimeBuffer.clear();
-		calAppliedTimeBuffer.reserve(calibrationAppliedTime.size());
+		calAppliedTimeBuffer.reserve(Metrics::calibrationApplied.size());
 
-		for (auto t : calibrationAppliedTime) {
-			calAppliedTimeBuffer.push_back(t - refTime);
+		for (auto t : Metrics::calibrationApplied.data()) {
+			calAppliedTimeBuffer.push_back(t.first - refTime);
 		}
 	}
 
 	void AddApplyTicks() {
-		ImPlot::PlotVLines("##CalibrationAppliedTime", &calAppliedTimeBuffer[0], calAppliedTimeBuffer.size());
+		if (calAppliedTimeBuffer.empty()) {
+			double x = -INFINITY;
+			ImPlot::PlotVLines("##CalibrationAppliedTime", &x, 1);
+		} else {
+			ImPlot::PlotVLines("##CalibrationAppliedTime", &calAppliedTimeBuffer[0], (int)calAppliedTimeBuffer.size());
+		}
 
 		ImPlot::SetNextLineStyle(ImVec4(0.5, 0.5, 1, 1));
 		ImPlot::PlotVLines("##TagLine", &lastMouseX, 1);
@@ -121,131 +113,220 @@ namespace {
 			wasHovered = true;
 		}
 	}
-}
 
-void PushCalibrationDebugData(const class CalibrationCalc& calc) {
-	if (calc.m_calcCycle == lastCycle) return;
-	lastCycle = calc.m_calcCycle;
+	struct GraphInfo {
+		const char* name;
+		void (*callback)();
+	};
 
-	double t = timestamp();
+	void SetupXAxis() {
+		ImPlot::SetupAxisLimits(ImAxis_X1, -Metrics::TimeSpan, 0, ImGuiCond_Always);
+	}
 
-	pos_offset_x.Push(t, calc.m_posOffset(0) * 1000);
-	pos_offset_y.Push(t, calc.m_posOffset(1) * 1000);
-	pos_offset_z.Push(t, calc.m_posOffset(2) * 1000);
+	void G_PosOffset_RawComputed() {
+		if (ImPlot::BeginPlot("##posOffsetRawComputed")) {
+			ImPlot::SetupAxes(NULL, "mm", 0, ImPlotAxisFlags_AutoFit | ImPlotAxisFlags_RangeFit);
+			SetupXAxis();
+			ImPlot::SetupAxisLimits(ImAxis_Y1, -200, 200, ImGuiCond_Appearing);
 
-	newCalRMS.Push(t, calc.m_newCalRMS * 1000);
-	oldCalRMS.Push(t, calc.m_oldCalRMS * 1000);
-	axisVariance.Push(t, calc.m_axisVariance);
+			AddApplyTicks();
+
+			PlotVector("", Metrics::posOffset_rawComputed);
+
+			ImPlot::EndPlot();
+		}
+	}
+
+	void G_PosOffset_CurrentCal() {
+		if (ImPlot::BeginPlot("##posOffsetCurrentCal")) {
+			ImPlot::SetupAxes(NULL, "mm", 0, ImPlotAxisFlags_AutoFit | ImPlotAxisFlags_RangeFit);
+			SetupXAxis();
+			ImPlot::SetupAxisLimits(ImAxis_Y1, -200, 200, ImGuiCond_Appearing);
+
+			AddApplyTicks();
+
+			PlotVector("", Metrics::posOffset_currentCal);
+
+			ImPlot::EndPlot();
+		}
+	}
+
+	void G_PosOffset_LastSample() {
+		if (ImPlot::BeginPlot("##posOffsetLastSample")) {
+			ImPlot::SetupAxes(NULL, "mm", 0, ImPlotAxisFlags_AutoFit | ImPlotAxisFlags_RangeFit);
+			SetupXAxis();
+			ImPlot::SetupAxisLimits(ImAxis_Y1, -200, 200, ImGuiCond_Appearing);
+
+			AddApplyTicks();
+
+			PlotVector("", Metrics::posOffset_lastSample);
+
+			ImPlot::EndPlot();
+		}
+	}
+
+	void G_PosOffset_PosError() {
+		if (ImPlot::BeginPlot("##Position error")) {
+			ImPlot::SetupAxes(NULL, "mm (RMS)");
+			SetupXAxis();
+			ImPlot::SetupAxisLimits(ImAxis_Y1, 0, 25, ImGuiCond_Appearing);
+
+			AddApplyTicks();
+
+			PlotLineG("Candidate", Metrics::error_rawComputed);
+			PlotLineG("Active", Metrics::error_currentCal);
+			ImPlot::EndPlot();
+		}
+	}
+
+	void G_AxisVariance() {
+		static bool firstrun = true;
+		static ImPlotColormap axisVarianceColormap;
+		if (firstrun) {
+			firstrun = false;
+
+			auto defaultFirst = ImPlot::GetColormapColor(0);
+
+			ImVec4 colors[] = {
+				defaultFirst,
+				{ 1, 0, 0, 1 },
+				{ 0, 1, 0, 1 },
+				{ 0.5, 0.5, 0.5, 1 },
+			};
+
+			axisVarianceColormap = ImPlot::AddColormap("AxisVarianceColormap", colors, sizeof(colors) / sizeof(colors[0]));
+		}
+
+		if (ImPlot::BeginPlot("##Axis variance", ImVec2(-1, 0), ImPlotFlags_NoLegend)) {
+			ImPlot::SetupAxes(NULL, NULL, 0, 0);
+			SetupXAxis();
+			ImPlot::SetupAxisLimits(ImAxis_Y1, 0, 0.003, ImGuiCond_Always);
+
+			AddApplyTicks();
+
+			ImPlot::PushColormap(axisVarianceColormap);
+			ImPlot::PushStyleVar(ImPlotStyleVar_FillAlpha, 0.5f);
+			ImPlot::SetNextLineStyle(ImVec4(1, 0, 0, 1));
+			PlotShadedG("##VarianceLow",
+				[&](int index) {
+					auto p = Metrics::axisIndependence[index];
+					p.second = min(p.second, CalibrationCalc::AxisVarianceThreshold);
+					return ImPlotPoint(p.first, p.second);
+				},
+				[&](int index) {
+					auto p = Metrics::axisIndependence[index];
+					return ImPlotPoint(p.first, 0);
+				},
+				Metrics::axisIndependence.size()
+			);
+
+			ImPlot::SetNextLineStyle(ImVec4(0, 1, 0, 1));
+
+			PlotShadedG("##VarianceHigh",
+				[&](int index) {
+					auto p = Metrics::axisIndependence[index];
+					p.second = max(p.second, CalibrationCalc::AxisVarianceThreshold);
+					return ImPlotPoint(p.first, p.second);
+				},
+				[&](int index) {
+					auto p = Metrics::axisIndependence[index];
+					return ImPlotPoint(p.first, CalibrationCalc::AxisVarianceThreshold);
+				},
+				Metrics::axisIndependence.size()
+			);
+
+			PlotLineG("Datapoint", Metrics::axisIndependence);
+
+			ImPlot::PopStyleVar(1);
+			ImPlot::PopColormap(1);
+
+			ImPlot::EndPlot();
+		}
+	}
+
+	const struct GraphInfo graphs[] = {
+		{ "Position Error", G_PosOffset_PosError },
+		{ "Axis Variance", G_AxisVariance },
+		{ "Offset: Raw Computed", G_PosOffset_RawComputed },
+		{ "Offset: Current Calibration", G_PosOffset_CurrentCal },
+		{ "Offset: Last Sample", G_PosOffset_LastSample },
+	};
+
+	const int N_GRAPHS = sizeof(graphs) / sizeof(graphs[0]);
 }
 
 void PushCalibrationApplyTime() {
-	double t = timestamp();
-	calibrationAppliedTime.push_back(t);
-
-	double cutoff = t - TimeSpan;
-
-	if (calibrationAppliedTime[0] < t - (TimeSpan * 2)) {
-		auto it = calibrationAppliedTime.begin();
-		
-		while (it != calibrationAppliedTime.end() && *it < cutoff) {
-			it++;
-		}
-		it--;
-		calibrationAppliedTime.erase(calibrationAppliedTime.begin(), it);
-	}
+	Metrics::calibrationApplied.Push(true);
 }
 
 
+void ShowCalibrationDebug(int rows, int cols) {
+	static std::vector<int> curIndexes;
 
-void ShowCalibrationDebug() {
 	//ImGui::ShowDemoWindow();
-	//		ImPlot::ShowDemoWindow();
+	ImPlot::ShowDemoWindow();
 
 	double initMouseX = lastMouseX;
 	wasHovered = false;
 
-	if (pos_offset_x.Data.empty()) return;
+	for (int i = (int)curIndexes.size(); i < rows * cols; i++) {
+		curIndexes.push_back(i % N_GRAPHS);
+	}
 
 	auto avail = ImGui::GetContentRegionAvail();
 
-	if (!ImPlot::BeginSubplots("##CalibrationDebug", 1, 3, avail,
-		ImPlotSubplotFlags_LinkAllX | ImPlotSubplotFlags_NoResize
-	)) return;
+	auto bgCol = ImGui::GetStyleColorVec4(ImGuiCol_FrameBg);
 
-	static bool firstrun = true;
-	static ImPlotColormap axisVarianceColormap;
-	if (firstrun) {
-		firstrun = false;
+	ImGui::PushStyleColor(ImGuiCol_TableRowBg, bgCol);
+	ImGui::PushStyleColor(ImGuiCol_TableRowBgAlt, bgCol);
+	ImPlot::PushStyleColor(ImPlotCol_FrameBg, ImVec4(0,0,0,0));
 
-		auto defaultFirst = ImPlot::GetColormapColor(0);
-
-		ImVec4 colors[] = {
-			defaultFirst,
-			{ 1, 0, 0, 1 },
-			{ 0, 1, 0, 1 },
-			{ 0.5, 0.5, 0.5, 1 },
-		};
-
-		axisVarianceColormap = ImPlot::AddColormap("AxisVarianceColormap", colors, sizeof(colors)/sizeof(colors[0]));
+	ImGui::SetNextWindowBgAlpha(1);
+	if (!ImGui::BeginChild("##CalibrationDebug", avail, false,
+		ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoFocusOnAppearing | ImGuiWindowFlags_NoTitleBar)) {
+		ImGui::EndChild();
+		return;
 	}
 
-	double t = refTime = timestamp();
+	if (!ImGui::BeginTable("##CalibrationDebug", cols, ImGuiTableFlags_RowBg)) {
+		return;
+	}
+
+	double t = refTime = Metrics::timestamp();
 	PrepApplyTicks();
 
-	//ImGui::TableNextRow();
-	// Axis offset
-	//ImGui::TableSetColumnIndex(0);
-	if (ImPlot::BeginPlot("posOffset")) {
-		ImPlot::SetupAxes(NULL, "mm", 0, ImPlotAxisFlags_AutoFit | ImPlotAxisFlags_RangeFit);
-		ImPlot::SetupAxisLimits(ImAxis_X1, -TimeSpan, 0, ImGuiCond_Always);
-		ImPlot::SetupAxisLimits(ImAxis_Y1, -200, 200, ImGuiCond_Appearing);
+	for (int r = 0; r < rows; r++) {
+		ImGui::TableNextRow();
+		for (int c = 0; c < cols; c++) {
+			int i = r * cols + c;
+			ImGui::TableSetColumnIndex(c);
 
-		AddApplyTicks();
+			ImGui::PushID(i);
 
-		ImPlot::PlotLineG("X", BufferGetter, &pos_offset_x, pos_offset_x.Data.size());
-		ImPlot::PlotLineG("Y", BufferGetter, &pos_offset_y, pos_offset_y.Data.size());
-		ImPlot::PlotLineG("Z", BufferGetter, &pos_offset_z, pos_offset_z.Data.size());
+			ImGui::SetNextItemWidth(ImGui::GetColumnWidth());
+			if (ImGui::BeginCombo("", graphs[curIndexes[i]].name, 0)) {
+				for (int j = 0; j < N_GRAPHS; j++) {
+					bool isSelected = j == curIndexes[i];
+					if (ImGui::Selectable(graphs[j].name, isSelected)) {
+						curIndexes[i] = j;
+					}
 
-		ImPlot::EndPlot();
-	}
+					if (isSelected) ImGui::SetItemDefaultFocus();
+				}
+				ImGui::EndCombo();
+			}
 
-	ImGui::TableSetColumnIndex(1);
-	if (ImPlot::BeginPlot("Position error")) {
-		ImPlot::SetupAxes(NULL, "mm (RMS)");
-		ImPlot::SetupAxisLimits(ImAxis_X1, -TimeSpan, 0, ImGuiCond_Always);
-		ImPlot::SetupAxisLimits(ImAxis_Y1, 0, 25, ImGuiCond_Appearing);
+			graphs[curIndexes[i]].callback();
 
-		AddApplyTicks();
-
-		ImPlot::PlotLineG("Candidate", BufferGetter, &newCalRMS, newCalRMS.Data.size());
-		ImPlot::PlotLineG("Active", BufferGetter, &oldCalRMS, oldCalRMS.Data.size());
-		ImPlot::EndPlot();
+			ImGui::PopID();
+		}
 	}
 	
-	ImGui::TableSetColumnIndex(2);
-	if (ImPlot::BeginPlot("Axis variance", ImVec2(-1, 0), ImPlotFlags_NoLegend)) {
-		ImPlot::SetupAxes(NULL, NULL, 0, 0);
-		ImPlot::SetupAxisLimits(ImAxis_X1, -TimeSpan, 0, ImGuiCond_Always);
-		ImPlot::SetupAxisLimits(ImAxis_Y1, 0, 0.003, ImGuiCond_Always);
+	ImGui::EndTable();
+	ImGui::EndChild();
 
-		AddApplyTicks();
-
-		ImPlot::PushColormap(axisVarianceColormap);
-		ImPlot::PushStyleVar(ImPlotStyleVar_FillAlpha, 0.5f);
-		ImPlot::SetNextLineStyle(ImVec4(1, 0, 0, 1));
-		ImPlot::PlotShadedG("VarianceLow", FetchBelowThreshold, &axisVariance, ZeroRef, &axisVariance, axisVariance.Data.size());
-		ImPlot::SetNextLineStyle(ImVec4(0, 1, 0, 1));
-		ImPlot::PlotShadedG("VarianceHigh", FetchAboveThreshold, &axisVariance, VarianceRef, &axisVariance, axisVariance.Data.size());
-		
-		ImPlot::PlotLineG("Datapoint", BufferGetter, &axisVariance, axisVariance.Data.size());
-		
-		ImPlot::PopStyleVar(1);
-		ImPlot::PopColormap(1);
-
-		ImPlot::EndPlot();
-	}
-	
-	ImPlot::EndSubplots();
+	ImPlot::PopStyleColor(1);
+	ImGui::PopStyleColor(2);
 
 	if (!wasHovered) {
 		lastMouseX = -INFINITY;

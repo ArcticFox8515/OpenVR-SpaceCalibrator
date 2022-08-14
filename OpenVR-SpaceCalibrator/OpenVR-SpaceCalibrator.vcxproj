@@ -91,6 +91,7 @@
     <ClInclude Include="..\Version.h" />
     <ClInclude Include="Calibration.h" />
     <ClInclude Include="CalibrationCalc.h" />
+    <ClInclude Include="CalibrationMetrics.h" />
     <ClInclude Include="Configuration.h" />
     <ClInclude Include="ContinuousCalibration.h" />
     <ClInclude Include="EmbeddedFiles.h" />
@@ -125,6 +126,7 @@
     <ClCompile Include="Calibration.cpp" />
     <ClCompile Include="CalibrationCalc.cpp" />
     <ClCompile Include="CalibrationDebug.cpp" />
+    <ClCompile Include="CalibrationMetrics.cpp" />
     <ClCompile Include="Configuration.cpp" />
     <ClCompile Include="EmbeddedFiles.cpp">
       <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Release|x64'">NotUsing</PrecompiledHeader>
