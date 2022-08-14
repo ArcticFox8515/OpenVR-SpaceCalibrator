@@ -106,6 +106,7 @@ namespace {
 	}
 }
 
+const double CalibrationCalc::AxisVarianceThreshold = 0.001;
 void CalibrationCalc::PushSample(const Sample& sample) {
 	m_samples.push_back(sample);
 }
@@ -128,9 +129,9 @@ Eigen::Vector3d CalibrationCalc::CalibrateRotation() const {
 				deltas.push_back(delta);
 		}
 	}
-	char buf[256];
-	snprintf(buf, sizeof buf, "Got %zd samples with %zd delta samples\n", m_samples.size(), deltas.size());
-	CalCtx.Log(buf);
+	//char buf[256];
+	//snprintf(buf, sizeof buf, "Got %zd samples with %zd delta samples\n", m_samples.size(), deltas.size());
+	//CalCtx.Log(buf);
 
 	// Kabsch algorithm
 
@@ -171,8 +172,8 @@ Eigen::Vector3d CalibrationCalc::CalibrateRotation() const {
 
 	Eigen::Vector3d euler = rot.eulerAngles(2, 1, 0) * 180.0 / EIGEN_PI;
 
-	snprintf(buf, sizeof buf, "Calibrated rotation: yaw=%.2f pitch=%.2f roll=%.2f\n", euler[1], euler[2], euler[0]);
-	CalCtx.Log(buf);
+	//snprintf(buf, sizeof buf, "Calibrated rotation: yaw=%.2f pitch=%.2f roll=%.2f\n", euler[1], euler[2], euler[0]);
+	//CalCtx.Log(buf);
 	return euler;
 }
 
@@ -221,9 +222,9 @@ Eigen::Vector3d CalibrationCalc::CalibrateTranslation(const Eigen::Matrix3d &rot
 	Eigen::Vector3d trans = coefficients.bdcSvd(Eigen::ComputeThinU | Eigen::ComputeThinV).solve(constants);
 	auto transcm = trans * 100.0;
 
-	char buf[256];
-	snprintf(buf, sizeof buf, "Calibrated translation x=%.2f y=%.2f z=%.2f\n", transcm[0], transcm[1], transcm[2]);
-	CalCtx.Log(buf);
+	//char buf[256];
+	//snprintf(buf, sizeof buf, "Calibrated translation x=%.2f y=%.2f z=%.2f\n", transcm[0], transcm[1], transcm[2]);
+	//CalCtx.Log(buf);
 	return trans;
 }
 
@@ -353,29 +354,31 @@ Eigen::Vector4d CalibrationCalc::ComputeAxisVariance(
 	return solver.eigenvalues();
 }
 
-bool CalibrationCalc::ValidateCalibration(const Eigen::AffineCompact3d &calibration, double *error) {
+bool CalibrationCalc::ValidateCalibration(const Eigen::AffineCompact3d &calibration, double *error, Eigen::Vector3d *posOffsetV) {
 	bool ok = true;
 
 	auto variance = ComputeAxisVariance(calibration);
-	std::ostringstream oss;
-	oss << "Axis variance: " << variance(0) << " " << variance(1) << " " << variance(2) << " " << variance(3) << "\n";
-	CalCtx.Log(oss.str());
-	oss.clear();
+	//std::ostringstream oss;
+	//oss << "Axis variance: " << variance(0) << " " << variance(1) << " " << variance(2) << " " << variance(3) << "\n";
+	//CalCtx.Log(oss.str());
+	//oss.clear();
+	m_axisVariance = variance(1);
 
-	if (variance(1) < 0.0005) {
-		CalCtx.Log("Calibration points are nearly coplanar. Try moving around more?\n");
+	if (m_axisVariance < AxisVarianceThreshold) {
+		//CalCtx.Log("Calibration points are nearly coplanar. Try moving around more?\n");
 		ok = false;
 	}
 
 	const auto posOffset = ComputeRefToTargetOffset(calibration);
 	char buf[256];
+	if (posOffsetV) *posOffsetV = posOffset;
 
-	snprintf(buf, sizeof buf, "HMD to target offset: (%.2f, %.2f, %.2f)\n", posOffset(0), posOffset(1), posOffset(2));
-	CalCtx.Log(buf);
+	//snprintf(buf, sizeof buf, "HMD to target offset: (%.2f, %.2f, %.2f)\n", posOffset(0), posOffset(1), posOffset(2));
+	//CalCtx.Log(buf);
 
 	double rmsError = RetargetingErrorRMS(posOffset, calibration);
-	snprintf(buf, sizeof buf, "Position error (RMS): %.3f\n", rmsError);
-	CalCtx.Log(buf);
+	//snprintf(buf, sizeof buf, "Position error (RMS): %.3f\n", rmsError);
+	//CalCtx.Log(buf);
 	if (rmsError > 0.1) ok = false;
 
 	if (error) *error = rmsError;
@@ -400,28 +403,42 @@ bool CalibrationCalc::ComputeOneshot() {
 }
 
 bool CalibrationCalc::ComputeIncremental(bool &lerp) {
+	m_calcCycle++;
+
 	auto calibration = ComputeCalibration();
 	
 	double newError, priorCalibrationError;
-	bool valid = ValidateCalibration(calibration, &newError);
+	bool valid = ValidateCalibration(calibration, &newError, &m_posOffset);
+	m_newCalRMS = newError;
 
 	// Use stricter thresholds for continuous calibration to limit jitter
 	valid = valid && newError < 0.005;
 
 	priorCalibrationError = INFINITY;
-	if (m_isValid) {
-		ValidateCalibration(m_estimatedTransformation, &priorCalibrationError);
-		bool oldCalibrationBetter = m_isValid && priorCalibrationError < newError * 4;
+	ValidateCalibration(m_estimatedTransformation, &priorCalibrationError);
+	m_oldCalRMS = priorCalibrationError;
+
+	bool ok = valid;
+	
+	static int stableCt;
+
+	if (ok) stableCt++;
+	else stableCt = 0;
+	
+	if (m_isValid && valid) {
+		bool oldCalibrationBetter = m_isValid && priorCalibrationError < newError * 4; // +0.00025 + 0.005 / stableCt;
+#if 0
 		char tmp[256];
-		snprintf(tmp, sizeof tmp, "Prior calibration error: %.3f (valid: %s); new error %.3f; new better? %s\n",
-			priorCalibrationError, m_isValid ? "yes" : "no", newError, !oldCalibrationBetter ? "yes" : "no");
+		snprintf(tmp, sizeof tmp, "Prior calibration error: %.3f (valid: %s) sct %d; new error %.3f; new better? %s\n",
+			priorCalibrationError, m_isValid ? "yes" : "no", stableCt, newError, !oldCalibrationBetter ? "yes" : "no");
 		CalCtx.Log(tmp);
+#endif
 		
 		// If we have a more noisy calibration than before, avoid updating.
-		if (oldCalibrationBetter) return false;
+		if (oldCalibrationBetter) ok = false;
 	}
 	
-	if (valid) {
+	if (ok) {
 		lerp = m_isValid;
 		if (!m_isValid) {
 			CalCtx.Log("Applying initial transformation...");

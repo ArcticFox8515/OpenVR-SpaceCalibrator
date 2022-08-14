@@ -56,6 +56,8 @@ struct Sample
 
 class CalibrationCalc {
 public:
+	static const double AxisVarianceThreshold;
+	
 	const Eigen::AffineCompact3d Transformation() const 
 	{
 		return m_estimatedTransformation;
@@ -84,7 +86,13 @@ public:
 		if (!m_samples.empty()) m_samples.pop_front();
 	}
 
-	CalibrationCalc() : m_isValid(false) {}
+	CalibrationCalc() : m_isValid(false), m_calcCycle(0) {}
+
+	// Debug fields
+	Eigen::Vector3d m_posOffset;
+	double m_newCalRMS, m_oldCalRMS, m_axisVariance;
+	long m_calcCycle;
+
 private:
 	bool m_isValid;
 	Eigen::AffineCompact3d m_estimatedTransformation;
@@ -101,6 +109,6 @@ private:
 
 	Eigen::Vector4d ComputeAxisVariance(const Eigen::AffineCompact3d& calibration) const;
 
-	bool ValidateCalibration(const Eigen::AffineCompact3d& calibration, double *errorOut = nullptr);
+	bool ValidateCalibration(const Eigen::AffineCompact3d& calibration, double *errorOut = nullptr, Eigen::Vector3d* posOffsetV = nullptr);
 
 };

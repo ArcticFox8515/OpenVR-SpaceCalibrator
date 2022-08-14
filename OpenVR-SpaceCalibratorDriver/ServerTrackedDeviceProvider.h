@@ -1,5 +1,7 @@
 #pragma once
 
+#define EIGEN_MPL2_ONLY
+
 #include "IPCServer.h"
 #include "../Protocol.h"
 

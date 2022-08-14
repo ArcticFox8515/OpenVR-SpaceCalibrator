@@ -8,6 +8,7 @@
 #include <imgui/imgui_internal.h>
 #include <imgui/imgui_impl_glfw.h>
 #include <imgui/imgui_impl_opengl3.h>
+#include <implot/implot.h>
 #include <GL/gl3w.h>
 #include <GLFW/glfw3.h>
 #include <openvr.h>
@@ -87,6 +88,7 @@ void CreateGLFWWindow()
 #endif
 
 	ImGui::CreateContext();
+	ImPlot::CreateContext();
 	ImGuiIO &io = ImGui::GetIO();
 	io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
 	io.ConfigFlags |= ImGuiConfigFlags_NavEnableGamepad;
@@ -204,6 +206,11 @@ void InitVR()
 }
 
 static char textBuf[0x400];
+
+static bool immediateRedraw;
+void RequestImmediateRedraw() {
+	immediateRedraw = true;
+}
 
 void RunLoop()
 {
@@ -356,6 +363,11 @@ void RunLoop()
 		if (dashboardVisible && waitEventsTimeout > dashboardInterval)
 			waitEventsTimeout = dashboardInterval;
 
+		if (immediateRedraw) {
+			waitEventsTimeout = 0;
+			immediateRedraw = false;
+		}
+
 		glfwWaitEventsTimeout(waitEventsTimeout);
 	}
 }
@@ -394,6 +406,7 @@ int APIENTRY wWinMain(_In_ HINSTANCE hInstance, _In_opt_ HINSTANCE hPrevInstance
 
 		ImGui_ImplOpenGL3_Shutdown();
 		ImGui_ImplGlfw_Shutdown();
+		ImPlot::DestroyContext();
 		ImGui::DestroyContext();
 	}
 	catch (std::runtime_error &e)

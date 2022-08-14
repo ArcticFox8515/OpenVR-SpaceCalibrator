@@ -92,6 +92,8 @@ void BuildMenu(bool runningInOverlay)
 		}
 
 		ImGui::PopStyleColor();
+
+		ShowCalibrationDebug();
 	}
 	else if (CalCtx.state == CalibrationState::None)
 	{

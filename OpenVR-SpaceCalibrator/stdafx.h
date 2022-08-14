@@ -1,5 +1,7 @@
 #pragma once
 
+#define EIGEN_MPL2_ONLY
+
 #include "targetver.h"
 
 #define WIN32_LEAN_AND_MEAN
