@@ -2,6 +2,7 @@
 #include "UserInterface.h"
 #include "Calibration.h"
 #include "Configuration.h"
+#include "VRState.h"
 #include "../Version.h"
 
 #include <thread>
@@ -9,22 +10,6 @@
 #include <vector>
 #include <algorithm>
 #include <imgui/imgui.h>
-
-struct VRDevice
-{
-	int id = -1;
-	vr::TrackedDeviceClass deviceClass;
-	std::string model = "";
-	std::string serial = "";
-	std::string trackingSystem = "";
-	vr::ETrackedControllerRole controllerRole = vr::TrackedControllerRole_Invalid;
-};
-
-struct VRState
-{
-	std::vector<std::string> trackingSystems;
-	std::vector<VRDevice> devices;
-};
 
 void TextWithWidth(const char *label, const char *text, float width);
 
@@ -37,7 +22,11 @@ void BuildMenu(bool runningInOverlay);
 static const ImGuiWindowFlags bareWindowFlags =
 	ImGuiWindowFlags_NoTitleBar |
 	ImGuiWindowFlags_NoResize |
-	ImGuiWindowFlags_NoMove;
+	ImGuiWindowFlags_NoMove |
+	ImGuiWindowFlags_NoScrollbar |
+	ImGuiWindowFlags_NoScrollWithMouse;
+
+void BuildContinuousCalDisplay();
 
 void BuildMainWindow(bool runningInOverlay)
 {
@@ -54,16 +43,55 @@ void BuildMainWindow(bool runningInOverlay)
 
 	ImGui::PushStyleColor(ImGuiCol_PlotHistogram, ImGui::GetStyleColorVec4(ImGuiCol_Button));
 
-	auto state = LoadVRState();
+	if (CalCtx.state == CalibrationState::Continuous || CalCtx.state == CalibrationState::ContinuousStandby) {
+		BuildContinuousCalDisplay();
+	}
+	else {
+		auto state = LoadVRState();
 
-	ImGui::BeginDisabled(CalCtx.state == CalibrationState::Continuous);
-	BuildSystemSelection(state);
-	BuildDeviceSelections(state);
-	ImGui::EndDisabled();
-	BuildMenu(runningInOverlay);
+		ImGui::BeginDisabled(CalCtx.state == CalibrationState::Continuous);
+		BuildSystemSelection(state);
+		BuildDeviceSelections(state);
+		ImGui::EndDisabled();
+		BuildMenu(runningInOverlay);
+	}
+
+	ImGui::SetNextWindowPos(ImVec2(10.0f, ImGui::GetWindowHeight() - ImGui::GetFrameHeightWithSpacing()));
+	ImGui::BeginChild("bottom line", ImVec2(ImGui::GetWindowWidth() - 20.0f, ImGui::GetFrameHeightWithSpacing() * 2), false);
+	ImGui::Text("OpenVR Space Calibrator v" SPACECAL_VERSION_STRING " - by tach/pushrax/bd_");
+	if (runningInOverlay)
+	{
+		ImGui::SameLine();
+		ImGui::Text("- close VR overlay to use mouse");
+	}
+	ImGui::EndChild();
 
 	ImGui::PopStyleColor();
 	ImGui::End();
+}
+
+void BuildContinuousCalDisplay() {
+	float width = ImGui::GetWindowContentRegionWidth(), scale = 1.0f;
+
+	if (ImGui::Button("Cancel Continuous Calibration", ImVec2(width * scale, ImGui::GetTextLineHeight() * 2))) {
+		EndContinuousCalibration();
+	}
+
+	ImGui::Checkbox("Hide target device from application", &CalCtx.quashTargetInContinuous);
+
+	// Status field...
+
+	ImGui::PushStyleColor(ImGuiCol_FrameBg, ImVec4(0, 0, 0, 1));
+
+	for (const auto& msg : CalCtx.messages) {
+		if (msg.type == CalibrationContext::Message::String) {
+			ImGui::TextWrapped("> %s", msg.str.c_str());
+		}
+	}
+
+	ImGui::PopStyleColor();
+
+	ShowCalibrationDebug();
 }
 
 void BuildMenu(bool runningInOverlay)
@@ -72,30 +100,7 @@ void BuildMenu(bool runningInOverlay)
 	ImGuiStyle &style = ImGui::GetStyle();
 	ImGui::Text("");
 
-	if (CalCtx.state == CalibrationState::Continuous || CalCtx.state == CalibrationState::ContinuousStandby) {
-		float width = ImGui::GetWindowContentRegionWidth(), scale = 1.0f;
-
-		if (ImGui::Button("Cancel Continuous Calibration", ImVec2(width * scale, ImGui::GetTextLineHeight() * 2))) {
-			EndContinuousCalibration();
-		}
-
-		ImGui::Checkbox("Hide target device from application", &CalCtx.quashTargetInContinuous);
-
-		// Status field...
-
-		ImGui::PushStyleColor(ImGuiCol_FrameBg, ImVec4(0, 0, 0, 1));
-
-		for (const auto& msg : CalCtx.messages) {
-			if (msg.type == CalibrationContext::Message::String) {
-				ImGui::TextWrapped("> %s", msg.str.c_str());
-			}
-		}
-
-		ImGui::PopStyleColor();
-
-		ShowCalibrationDebug();
-	}
-	else if (CalCtx.state == CalibrationState::None)
+	if (CalCtx.state == CalibrationState::None)
 	{
 		if (CalCtx.validProfile && !CalCtx.enabled)
 		{
@@ -200,16 +205,6 @@ void BuildMenu(bool runningInOverlay)
 	{
 		ImGui::Button("Calibration in progress...", ImVec2(ImGui::GetWindowContentRegionWidth(), ImGui::GetTextLineHeight() * 2));
 	}
-
-	ImGui::SetNextWindowPos(ImVec2(10.0f, ImGui::GetWindowHeight() - ImGui::GetFrameHeightWithSpacing()));
-	ImGui::BeginChild("bottom line", ImVec2(ImGui::GetWindowWidth() - 20.0f, ImGui::GetFrameHeightWithSpacing() * 2), false);
-	ImGui::Text("OpenVR Space Calibrator v" SPACECAL_VERSION_STRING " - by tach/pushrax/bd_");
-	if (runningInOverlay)
-	{
-		ImGui::SameLine();
-		ImGui::Text("- close VR overlay to use mouse");
-	}
-	ImGui::EndChild();
 
 	ImGui::SetNextWindowPos(ImVec2(20.0f, 20.0f), ImGuiCond_Always);
 	ImGui::SetNextWindowSize(ImVec2(io.DisplaySize.x - 40.0f, io.DisplaySize.y - 40.0f), ImGuiCond_Always);
@@ -428,6 +423,7 @@ void BuildDeviceSelection(const VRState &state, int &initialSelected, const std:
 	}
 
 	if (selected == -1 && standby) {
+		bool present = false;
 		for (auto& device : state.devices)
 		{
 			if (device.trackingSystem != system)
@@ -436,11 +432,11 @@ void BuildDeviceSelection(const VRState &state, int &initialSelected, const std:
 			if (standbyDevice.model != device.model) continue;
 			if (standbyDevice.serial != device.serial) continue;
 
-			selected = device.id;
+			present = true;
 			break;
 		}
 
-		if (selected == -1) {
+		if (!present) {
 			auto label = LabelString(standbyDevice);
 			ImGui::Selectable(label.c_str(), true);
 		}
@@ -493,62 +489,11 @@ void BuildDeviceSelections(const VRState &state)
 	}
 }
 
-VRState LoadVRState()
-{
-	VRState state;
-	auto &trackingSystems = state.trackingSystems;
+VRState LoadVRState() {
+	VRState state = VRState::Load();
+	auto& trackingSystems = state.trackingSystems;
 
-	char buffer[vr::k_unMaxPropertyStringSize];
-
-	for (uint32_t id = 0; id < vr::k_unMaxTrackedDeviceCount; ++id)
-	{
-		vr::ETrackedPropertyError err = vr::TrackedProp_Success;
-		auto deviceClass = vr::VRSystem()->GetTrackedDeviceClass(id);
-		if (deviceClass == vr::TrackedDeviceClass_Invalid)
-			continue;
-
-		if (deviceClass != vr::TrackedDeviceClass_TrackingReference)
-		{
-			vr::VRSystem()->GetStringTrackedDeviceProperty(id, vr::Prop_TrackingSystemName_String, buffer, vr::k_unMaxPropertyStringSize, &err);
-
-			if (err == vr::TrackedProp_Success)
-			{
-				std::string system(buffer);
-				auto existing = std::find(trackingSystems.begin(), trackingSystems.end(), system);
-				if (existing != trackingSystems.end())
-				{
-					if (deviceClass == vr::TrackedDeviceClass_HMD)
-					{
-						trackingSystems.erase(existing);
-						trackingSystems.insert(trackingSystems.begin(), system);
-					}
-				}
-				else
-				{
-					trackingSystems.push_back(system);
-				}
-
-				VRDevice device;
-				device.id = id;
-				device.deviceClass = deviceClass;
-				device.trackingSystem = system;
-
-				vr::VRSystem()->GetStringTrackedDeviceProperty(id, vr::Prop_ModelNumber_String, buffer, vr::k_unMaxPropertyStringSize, &err);
-				device.model = std::string(buffer);
-
-				vr::VRSystem()->GetStringTrackedDeviceProperty(id, vr::Prop_SerialNumber_String, buffer, vr::k_unMaxPropertyStringSize, &err);
-				device.serial = std::string(buffer);
-
-				device.controllerRole = (vr::ETrackedControllerRole) vr::VRSystem()->GetInt32TrackedDeviceProperty(id, vr::Prop_ControllerRoleHint_Int32, &err);
-
-				state.devices.push_back(device);
-			}
-			else
-			{
-				printf("failed to get tracking system name for id %d\n", id);
-			}
-		}
-	}
+	// Inject entries for continuous calibration targets which have yet to load
 
 	if (CalCtx.state == CalibrationState::ContinuousStandby) {
 		auto existing = std::find(trackingSystems.begin(), trackingSystems.end(), CalCtx.referenceTrackingSystem);

@@ -3,6 +3,7 @@
 #include "Configuration.h"
 #include "IPCClient.h"
 #include "CalibrationCalc.h"
+#include "VRState.h"
 
 #include <string>
 #include <vector>
@@ -18,6 +19,10 @@ inline vr::HmdQuaternion_t operator*(const vr::HmdQuaternion_t& lhs, const vr::H
 		(lhs.w * rhs.z) + (lhs.z * rhs.w) + (lhs.x * rhs.y) - (lhs.y * rhs.x)
 	};
 }
+
+CalibrationContext CalCtx;
+IPCClient Driver;
+static protocol::DriverPoseShmem shmem;
 
 namespace {
 	CalibrationCalc calibration;
@@ -185,15 +190,21 @@ namespace {
 
 		return true;
 	}
+
+	bool AssignTargets() {
+		auto state = VRState::Load();
+		
+		if (CalCtx.referenceID < 0) {
+			CalCtx.referenceID = state.FindDevice(CalCtx.referenceStandby.trackingSystem, CalCtx.referenceStandby.model, CalCtx.referenceStandby.serial);
+		}
+
+		if (CalCtx.targetID < 0) {
+			CalCtx.targetID = state.FindDevice(CalCtx.targetStandby.trackingSystem, CalCtx.targetStandby.model, CalCtx.targetStandby.serial);
+		}
+
+		return CalCtx.referenceID >= 0 && CalCtx.targetID >= 0;
+	}
 }
-
-IPCClient m_Driver;
-protocol::DriverPoseShmem m_shmem;
-CalibrationContext CalCtx;
-
-
-IPCClient Driver;
-static protocol::DriverPoseShmem shmem;
 
 void InitCalibrator()
 {
@@ -344,7 +355,7 @@ void CalibrationTick(double time)
 	});
 
 	if (ctx.state == CalibrationState::ContinuousStandby) {
-		if (ctx.targetID >= 0 && ctx.referenceID >= 0) {
+		if (AssignTargets()) {
 			StartContinuousCalibration();
 		}
 		else {
