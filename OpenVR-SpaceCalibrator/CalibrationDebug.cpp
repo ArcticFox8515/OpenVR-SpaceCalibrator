@@ -166,7 +166,9 @@ void ShowCalibrationDebug() {
 
 	if (pos_offset_x.Data.empty()) return;
 
-	if (!ImPlot::BeginSubplots("##CalibrationDebug", 1, 3, ImVec2(-1, 400),
+	auto avail = ImGui::GetContentRegionAvail();
+
+	if (!ImPlot::BeginSubplots("##CalibrationDebug", 1, 3, avail,
 		ImPlotSubplotFlags_LinkAllX | ImPlotSubplotFlags_NoResize
 	)) return;
 

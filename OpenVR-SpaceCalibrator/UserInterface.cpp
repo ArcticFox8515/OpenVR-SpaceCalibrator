@@ -24,18 +24,25 @@ static const ImGuiWindowFlags bareWindowFlags =
 	ImGuiWindowFlags_NoResize |
 	ImGuiWindowFlags_NoMove |
 	ImGuiWindowFlags_NoScrollbar |
-	ImGuiWindowFlags_NoScrollWithMouse;
+	ImGuiWindowFlags_NoScrollWithMouse |
+	ImGuiWindowFlags_NoCollapse;
 
 void BuildContinuousCalDisplay();
+void ShowVersionLine();
 
-void BuildMainWindow(bool runningInOverlay)
+static bool runningInOverlay;
+
+void BuildMainWindow(bool runningInOverlay_)
 {
+	runningInOverlay = runningInOverlay_;
+	bool continuousCalibration = CalCtx.state == CalibrationState::Continuous || CalCtx.state == CalibrationState::ContinuousStandby;
+	
 	auto &io = ImGui::GetIO();
 
 	ImGui::SetNextWindowPos(ImVec2(0.0f, 0.0f), ImGuiCond_Always);
 	ImGui::SetNextWindowSize(io.DisplaySize, ImGuiCond_Always);
 
-	if (!ImGui::Begin("MainWindow", nullptr, bareWindowFlags))
+	if (!ImGui::Begin("OpenVRSpaceCalibrator", nullptr, bareWindowFlags))
 	{
 		ImGui::End();
 		return;
@@ -43,7 +50,7 @@ void BuildMainWindow(bool runningInOverlay)
 
 	ImGui::PushStyleColor(ImGuiCol_PlotHistogram, ImGui::GetStyleColorVec4(ImGuiCol_Button));
 
-	if (CalCtx.state == CalibrationState::Continuous || CalCtx.state == CalibrationState::ContinuousStandby) {
+	if (continuousCalibration) {
 		BuildContinuousCalDisplay();
 	}
 	else {
@@ -56,8 +63,20 @@ void BuildMainWindow(bool runningInOverlay)
 		BuildMenu(runningInOverlay);
 	}
 
+	ShowVersionLine();
+
+	ImGui::PopStyleColor();
+	ImGui::End();
+
+	ImGui::ShowDemoWindow();
+}
+
+void ShowVersionLine() {
 	ImGui::SetNextWindowPos(ImVec2(10.0f, ImGui::GetWindowHeight() - ImGui::GetFrameHeightWithSpacing()));
-	ImGui::BeginChild("bottom line", ImVec2(ImGui::GetWindowWidth() - 20.0f, ImGui::GetFrameHeightWithSpacing() * 2), false);
+	if (!ImGui::BeginChild("bottom line", ImVec2(ImGui::GetWindowWidth() - 20.0f, ImGui::GetFrameHeightWithSpacing() * 2), false)) {
+		ImGui::EndChild();
+		return;
+	}
 	ImGui::Text("OpenVR Space Calibrator v" SPACECAL_VERSION_STRING " - by tach/pushrax/bd_");
 	if (runningInOverlay)
 	{
@@ -65,12 +84,74 @@ void BuildMainWindow(bool runningInOverlay)
 		ImGui::Text("- close VR overlay to use mouse");
 	}
 	ImGui::EndChild();
+}
 
-	ImGui::PopStyleColor();
+void CCal_BasicInfo();
+
+void BuildContinuousCalDisplay() {
+	ImGui::SetNextWindowPos(ImVec2(0, 0));
+	ImGui::SetNextWindowSize(ImGui::GetWindowSize());
+	ImGui::SetNextWindowBgAlpha(1);
+	if (!ImGui::Begin("Continuous Calibration", nullptr,
+		bareWindowFlags & ~ImGuiWindowFlags_NoTitleBar
+	)) {
+		ImGui::End();
+		return;
+	}
+
+	ImVec2 contentRegion;
+	contentRegion.x = ImGui::GetWindowContentRegionWidth();
+	contentRegion.y = ImGui::GetWindowHeight() - ImGui::GetFrameHeightWithSpacing() * 2.1;
+
+	if (!ImGui::BeginChild("CCalDisplayFrame", contentRegion, false)) {
+		ImGui::EndChild();
+		return;
+	}
+
+	if (ImGui::BeginTabBar("CCalTabs", 0)) {
+		if (ImGui::BeginTabItem("Status")) {
+			CCal_BasicInfo();
+			ImGui::EndTabItem();
+		}
+	}
+
+	ImGui::EndChild();
+
+	ShowVersionLine();
+
 	ImGui::End();
 }
 
-void BuildContinuousCalDisplay() {
+void CCal_BasicInfo() {
+	if (ImGui::BeginTable("DeviceInfo", 2, 0)) {
+		ImGui::TableSetupColumn("Reference device");
+		ImGui::TableSetupColumn("Target device");
+		ImGui::TableHeadersRow();
+
+		ImGui::TableNextRow();
+		ImGui::TableSetColumnIndex(0);
+		ImGui::BeginGroup();
+		ImGui::Text("%s / %s / %s",
+			CalCtx.referenceStandby.trackingSystem.c_str(),
+			CalCtx.referenceStandby.model.c_str(),
+			CalCtx.referenceStandby.serial.c_str()
+		);
+		ImGui::Text("Status: %s", CalCtx.referenceID >= 0 ? "DETECTED" : "Waiting...");
+		ImGui::EndGroup();
+
+		ImGui::TableSetColumnIndex(1);
+		ImGui::BeginGroup();
+		ImGui::Text("%s / %s / %s",
+			CalCtx.targetStandby.trackingSystem.c_str(),
+			CalCtx.targetStandby.model.c_str(),
+			CalCtx.targetStandby.serial.c_str()
+		);
+		ImGui::Text("Status: %s", CalCtx.targetID >= 0 ? "DETECTED" : "Waiting...");
+		ImGui::EndGroup();
+
+		ImGui::EndTable();
+	}
+
 	float width = ImGui::GetWindowContentRegionWidth(), scale = 1.0f;
 
 	if (ImGui::Button("Cancel Continuous Calibration", ImVec2(width * scale, ImGui::GetTextLineHeight() * 2))) {
@@ -553,3 +634,4 @@ void TextWithWidth(const char *label, const char *text, float width)
 	ImGui::Text(text);
 	ImGui::EndChild();
 }
+
