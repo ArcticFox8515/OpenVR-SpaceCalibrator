@@ -9,6 +9,7 @@
 
 #include <openvr_driver.h>
 
+
 class ServerTrackedDeviceProvider : public vr::IServerTrackedDeviceProvider
 {
 public:
@@ -42,6 +43,7 @@ public:
 	ServerTrackedDeviceProvider() : server(this) { }
 	void SetDeviceTransform(const protocol::SetDeviceTransform &newTransform);
 	bool HandleDevicePoseUpdated(uint32_t openVRID, vr::DriverPose_t &pose);
+	void HandleApplyRandomOffset();
 
 private:
 	IPCServer server;
@@ -58,4 +60,6 @@ private:
 	};
 
 	DeviceTransform transforms[vr::k_unMaxTrackedDeviceCount];
+	Eigen::Vector3d debugTransform;
+	Eigen::Quaterniond debugRotation;
 };

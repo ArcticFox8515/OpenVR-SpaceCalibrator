@@ -99,6 +99,7 @@ namespace protocol
 		RequestInvalid,
 		RequestHandshake,
 		RequestSetDeviceTransform,
+		RequestDebugOffset
 	};
 
 	enum ResponseType

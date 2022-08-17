@@ -34,8 +34,9 @@ namespace Metrics {
 	extern TimeSeries<Eigen::Vector3d> posOffset_rawComputed; // , rotOffset_rawComputed;
 	extern TimeSeries<Eigen::Vector3d> posOffset_currentCal; // , rotOffset_currentCal;
 	extern TimeSeries<Eigen::Vector3d> posOffset_lastSample; // , rotOffset_lastSample;
+	extern TimeSeries<Eigen::Vector3d> posOffset_byRelPose;
 	
-	extern TimeSeries<double> error_rawComputed, error_currentCal;
+	extern TimeSeries<double> error_rawComputed, error_currentCal, error_byRelPose, error_currentCalRelPose;
 	extern TimeSeries<double> axisIndependence;
 
 	extern TimeSeries<bool> calibrationApplied;

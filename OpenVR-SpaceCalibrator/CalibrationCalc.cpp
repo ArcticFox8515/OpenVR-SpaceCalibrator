@@ -375,6 +375,118 @@ bool CalibrationCalc::ValidateCalibration(const Eigen::AffineCompact3d &calibrat
 	return ok;
 }
 
+
+// Given:
+//   R - the reference pose (in reference world space)
+//   T - the target pose (in target world space)
+//   C - the true calibration (target world -> reference world)
+// We assume that there is some "static target pose" S s.t.:
+// R * S = C * T (we'll call this the static target pose)
+// To compute S:
+// S = R^-1 * C * T
+// To compute C:
+// R * S * T^-1 = C
+
+namespace {
+	class PoseAverager {
+	private:
+		Eigen::Matrix<double, 4, Eigen::Dynamic> quatAvg;
+		Eigen::Vector3d accum = Eigen::Vector3d::Zero();
+		int i = 0;
+	public:
+		PoseAverager(size_t n_samples) {
+			quatAvg.resize(4, n_samples);
+		}
+
+		template<typename P>
+		void Push(const P &pose) {
+			const Eigen::Quaterniond rot(pose.rotation());
+			quatAvg.col(i++) = Eigen::Vector4d(rot.w(), rot.x(), rot.y(), rot.z());
+			accum += pose.translation();
+		}
+
+		Eigen::AffineCompact3d Average() {
+			// https://stackoverflow.com/a/27410865/36723
+			auto quatT = quatAvg.transpose();
+			Eigen::Matrix4d quatMul = quatAvg * quatT;
+			Eigen::SelfAdjointEigenSolver<Eigen::Matrix4d> solver;
+			solver.compute(quatMul);
+
+			Eigen::Vector4d quatAvgV = solver.eigenvectors().col(3).real().normalized();
+			Eigen::Quaterniond avgQ(quatAvgV(0), quatAvgV(1), quatAvgV(2), quatAvgV(3));
+			avgQ.normalize();
+
+			Eigen::AffineCompact3d pose(avgQ);
+			pose.pretranslate(accum * (1.0 / i));
+
+			return pose;
+		}
+
+		template<typename XS, typename F>
+		static Eigen::AffineCompact3d AverageFor(const XS& samples, const F& poseProvider) {
+			int sampleCount = 0;
+
+			for (auto& sample : samples) {
+				if (!sample.valid) continue;
+
+				sampleCount++;
+			}
+
+			PoseAverager accum(sampleCount);
+
+			for (auto& sample : samples) {
+				if (!sample.valid) continue;
+				auto pose = poseProvider(sample);
+				accum.Push(pose);
+			}
+
+			return accum.Average();
+		}
+	};
+}
+
+// S = R^-1 * C * T
+Eigen::AffineCompact3d CalibrationCalc::EstimateRefToTargetPose(const Eigen::AffineCompact3d &calibration) const {
+	auto avg = PoseAverager::AverageFor(m_samples, [&](const auto& sample) {
+		return Eigen::Affine3d(sample.ref.ToAffine().inverse() * calibration * sample.target.ToAffine());
+	});
+
+#if 0
+	Eigen::Vector3d eulerAvgQ = avg.rotation().eulerAngles(2, 1, 0) * 180.0 / EIGEN_PI;
+	Eigen::Vector3d trans = Eigen::Vector3d(avg.translation());
+
+	std::ostringstream oss;
+	oss << "==========================================================================================\n";
+	oss << "Avg rot: " << eulerAvgQ.x() << ", " << eulerAvgQ.y() << ", " << eulerAvgQ.z() << "\n";
+	oss << "Avg trans:\n" << trans.x() << ", " << trans.y() << ", " << trans.z() << "\n";
+	OutputDebugStringA(oss.str().c_str());
+#endif
+	return avg;
+}
+
+// S = R^-1 * C * T
+// R * S * T^-1 = C
+
+// R * (R^-1 * C * T) * T^-1 = C
+
+/*
+ * This calibration routine attempts to use the estimated refToTargetPose to derive the
+ * playspace calibration based on the relative position of reference and target device.
+ * This computation can be performed even when the devices are not moving.
+ */
+bool CalibrationCalc::CalibrateByRelPose(Eigen::AffineCompact3d &out) const {
+	// R * S * T^-1 = C
+	if (!m_refToTargetPoseValid) return false;
+
+	out = PoseAverager::AverageFor(m_samples, [&](const auto& sample) {
+		return Eigen::AffineCompact3d(sample.ref.ToAffine() * m_refToTargetPose * sample.target.ToAffine().inverse());
+	});
+
+	return true;
+}
+
+
+
 bool CalibrationCalc::ComputeOneshot() {
 	auto calibration = ComputeCalibration();
 
@@ -409,6 +521,7 @@ bool CalibrationCalc::ComputeIncremental(bool &lerp) {
 
 	auto calibration = ComputeCalibration();
 
+	bool usingRelPose = false;
 	bool valid = true;
 	auto variance = ComputeAxisVariance(calibration);
 	//std::ostringstream oss;
@@ -423,16 +536,18 @@ bool CalibrationCalc::ComputeIncremental(bool &lerp) {
 	}
 	Metrics::axisIndependence.Push(m_axisVariance);
 
-	double newError, priorCalibrationError;
-	valid = valid && ValidateCalibration(calibration, &newError, &m_posOffset);
-	m_newCalRMS = newError;
-	Metrics::posOffset_rawComputed.Push(m_posOffset * 1000);
-	Metrics::error_rawComputed.Push(newError * 1000);
+	double newError = INFINITY, priorCalibrationError = INFINITY;
+	if (valid) {
+		valid = ValidateCalibration(calibration, &newError, &m_posOffset);
+		m_newCalRMS = newError;
+		Metrics::posOffset_rawComputed.Push(m_posOffset * 1000);
+	}
 
+	Metrics::error_rawComputed.Push(newError * 1000);
+	
 	// Use stricter thresholds for continuous calibration to limit jitter
 	valid = valid && newError < 0.005;
 
-	priorCalibrationError = INFINITY;
 	Eigen::Vector3d priorPosOffset;
 	ValidateCalibration(m_estimatedTransformation, &priorCalibrationError, &priorPosOffset);
 	m_oldCalRMS = priorCalibrationError;
@@ -448,8 +563,8 @@ bool CalibrationCalc::ComputeIncremental(bool &lerp) {
 	if (ok) stableCt++;
 	else stableCt = 0;
 	
-	if (m_isValid && valid) {
-		bool oldCalibrationBetter = m_isValid && priorCalibrationError < newError * 4; // +0.00025 + 0.005 / stableCt;
+	bool oldCalibrationBetter = !valid || (m_isValid && priorCalibrationError < newError * 4); // +0.00025 + 0.005 / stableCt;
+
 #if 0
 		char tmp[256];
 		snprintf(tmp, sizeof tmp, "Prior calibration error: %.3f (valid: %s) sct %d; new error %.3f; new better? %s\n",
@@ -457,10 +572,28 @@ bool CalibrationCalc::ComputeIncremental(bool &lerp) {
 		CalCtx.Log(tmp);
 #endif
 		
-		// If we have a more noisy calibration than before, avoid updating.
-		if (oldCalibrationBetter) ok = false;
-	}
+	// If we have a more noisy calibration than before, avoid updating.
+	if (oldCalibrationBetter) ok = false;
 	
+	// Now, can we use the relative pose to perform a rapid correction?
+	Eigen::AffineCompact3d byRelPose;
+	bool relPoseAvailable = CalibrateByRelPose(byRelPose);
+	double relPoseError, existingPoseErrorUsingRelPosition = 0;
+	Eigen::Vector3d relPosOffset;
+	bool relPoseValid = relPoseAvailable && ValidateCalibration(byRelPose, &relPoseError, &relPosOffset);
+	if (m_refToTargetPoseValid) {
+		Metrics::posOffset_byRelPose.Push(relPosOffset * 1000);
+		Metrics::error_byRelPose.Push(relPoseError * 1000);
+		existingPoseErrorUsingRelPosition = RetargetingErrorRMS(m_refToTargetPose.translation(), m_estimatedTransformation);
+		Metrics::error_currentCalRelPose.Push(existingPoseErrorUsingRelPosition * 1000);
+	}
+	if (!ok && relPoseValid && relPoseError * 1.5 + 0.005 < existingPoseErrorUsingRelPosition) {
+		usingRelPose = true;
+		newError = relPoseError;
+		calibration = byRelPose;
+		ok = true;
+	}
+
 	if (ok) {
 		lerp = m_isValid;
 		if (!m_isValid) {
@@ -472,6 +605,13 @@ bool CalibrationCalc::ComputeIncremental(bool &lerp) {
 		
 		m_isValid = true;
 		m_estimatedTransformation = calibration;
+
+		if (!usingRelPose) {
+			m_refToTargetPose = EstimateRefToTargetPose(m_estimatedTransformation);
+			m_refToTargetPoseValid = true;
+		}
+
+		Metrics::calibrationApplied.Push(!usingRelPose);
 
 		return true;
 	}

@@ -465,8 +465,6 @@ void CalibrationTick(double time)
 		if (CalCtx.state == CalibrationState::Continuous) {
 			CalCtx.messages.clear();
 			ok = calibration.ComputeIncremental(lerp);
-
-			if (ok) PushCalibrationApplyTime();
 		}
 		else {
 			ok = calibration.ComputeOneshot();
@@ -532,4 +530,9 @@ void ApplyChaperoneBounds()
 	vr::VRChaperoneSetup()->SetWorkingStandingZeroPoseToRawTrackingPose(&CalCtx.chaperone.standingCenter);
 	vr::VRChaperoneSetup()->SetWorkingPlayAreaSize(CalCtx.chaperone.playSpaceSize.v[0], CalCtx.chaperone.playSpaceSize.v[1]);
 	vr::VRChaperoneSetup()->CommitWorkingCopy(vr::EChaperoneConfigFile_Live);
+}
+
+void DebugApplyRandomOffset() {
+	protocol::Request req(protocol::RequestDebugOffset);
+	Driver.SendBlocking(req);
 }

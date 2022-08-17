@@ -85,14 +85,19 @@ namespace {
 	double lastMouseX = -INFINITY;
 	bool wasHovered;
 
-	std::vector<double> calAppliedTimeBuffer;
+	std::vector<double> calAppliedTimeBuffer, calByRelPoseTimeBuffer;
 
 	void PrepApplyTicks() {
 		calAppliedTimeBuffer.clear();
-		calAppliedTimeBuffer.reserve(Metrics::calibrationApplied.size());
+		calByRelPoseTimeBuffer.clear();
 
 		for (auto t : Metrics::calibrationApplied.data()) {
-			calAppliedTimeBuffer.push_back(t.first - refTime);
+			if (t.second) {
+				calAppliedTimeBuffer.push_back(t.first - refTime);
+			}
+			else {
+				calByRelPoseTimeBuffer.push_back(t.first - refTime);
+			}
 		}
 	}
 
@@ -102,6 +107,14 @@ namespace {
 			ImPlot::PlotVLines("##CalibrationAppliedTime", &x, 1);
 		} else {
 			ImPlot::PlotVLines("##CalibrationAppliedTime", &calAppliedTimeBuffer[0], (int)calAppliedTimeBuffer.size());
+		}
+
+		if (calByRelPoseTimeBuffer.empty()) {
+			double x = -INFINITY;
+			ImPlot::PlotVLines("##CalibrationAppliedTimeByRelPose", &x, 1);
+		}
+		else {
+			ImPlot::PlotVLines("##CalibrationAppliedTimeByRelPose", &calByRelPoseTimeBuffer[0], (int)calByRelPoseTimeBuffer.size());
 		}
 
 		ImPlot::SetNextLineStyle(ImVec4(0.5, 0.5, 1, 1));
@@ -165,6 +178,20 @@ namespace {
 		}
 	}
 
+	void G_PosOffset_ByRelPose() {
+		if (ImPlot::BeginPlot("##posOffsetByRelPose")) {
+			ImPlot::SetupAxes(NULL, "mm", 0, ImPlotAxisFlags_AutoFit | ImPlotAxisFlags_RangeFit);
+			SetupXAxis();
+			ImPlot::SetupAxisLimits(ImAxis_Y1, -200, 200, ImGuiCond_Appearing);
+
+			AddApplyTicks();
+
+			PlotVector("", Metrics::posOffset_byRelPose);
+
+			ImPlot::EndPlot();
+		}
+	}
+
 	void G_PosOffset_PosError() {
 		if (ImPlot::BeginPlot("##Position error")) {
 			ImPlot::SetupAxes(NULL, "mm (RMS)");
@@ -175,6 +202,8 @@ namespace {
 
 			PlotLineG("Candidate", Metrics::error_rawComputed);
 			PlotLineG("Active", Metrics::error_currentCal);
+			PlotLineG("By Rel Pose", Metrics::error_byRelPose);
+			PlotLineG("CC Rel Pose", Metrics::error_currentCalRelPose);
 			ImPlot::EndPlot();
 		}
 	}
@@ -250,6 +279,7 @@ namespace {
 		{ "Offset: Raw Computed", G_PosOffset_RawComputed },
 		{ "Offset: Current Calibration", G_PosOffset_CurrentCal },
 		{ "Offset: Last Sample", G_PosOffset_LastSample },
+		{ "Offset: By Rel Pose", G_PosOffset_ByRelPose },
 	};
 
 	const int N_GRAPHS = sizeof(graphs) / sizeof(graphs[0]);

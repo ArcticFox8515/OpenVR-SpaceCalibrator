@@ -160,8 +160,19 @@ void CCal_BasicInfo() {
 
 	float width = ImGui::GetWindowContentRegionWidth(), scale = 1.0f;
 
-	if (ImGui::Button("Cancel Continuous Calibration", ImVec2(width * scale, ImGui::GetTextLineHeight() * 2))) {
-		EndContinuousCalibration();
+	if (ImGui::BeginTable("##CCal_Cancel", 2, 0, ImVec2(width * scale, ImGui::GetTextLineHeight() * 2))) {
+		ImGui::TableNextRow();
+		ImGui::TableSetColumnIndex(0);
+		if (ImGui::Button("Cancel Continuous Calibration", ImVec2(-FLT_MIN, 0.0f))) {
+			EndContinuousCalibration();
+		}
+
+		ImGui::TableSetColumnIndex(1);
+		if (ImGui::Button("DEBUG OFFSET", ImVec2(-FLT_MIN, 0.0f))) {
+			DebugApplyRandomOffset();
+		}
+
+		ImGui::EndTable();
 	}
 
 	ImGui::Checkbox("Hide target device from application", &CalCtx.quashTargetInContinuous);

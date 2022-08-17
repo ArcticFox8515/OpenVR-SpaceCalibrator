@@ -7,8 +7,9 @@ namespace Metrics {
 	TimeSeries<Eigen::Vector3d> posOffset_rawComputed; // , rotOffset_rawComputed;
 	TimeSeries<Eigen::Vector3d> posOffset_currentCal; // , rotOffset_currentCal;
 	TimeSeries<Eigen::Vector3d> posOffset_lastSample; // , rotOffset_lastSample;
+	TimeSeries<Eigen::Vector3d> posOffset_byRelPose;
 
-	TimeSeries<double> error_rawComputed, error_currentCal;
+	TimeSeries<double> error_rawComputed, error_currentCal, error_byRelPose, error_currentCalRelPose;
 	TimeSeries<double> axisIndependence;
 
 	TimeSeries<bool> calibrationApplied;

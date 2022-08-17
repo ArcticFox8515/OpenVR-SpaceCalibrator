@@ -2,6 +2,8 @@
 #include "Logging.h"
 #include "InterfaceHookInjector.h"
 
+#include <random>
+
 vr::EVRInitError ServerTrackedDeviceProvider::Init(vr::IVRDriverContext *pDriverContext)
 {
 	TRACE("ServerTrackedDeviceProvider::Init()");
@@ -12,6 +14,9 @@ vr::EVRInitError ServerTrackedDeviceProvider::Init(vr::IVRDriverContext *pDriver
 	InjectHooks(this, pDriverContext);
 	server.Run();
 	shmem.Create(OPENVR_SPACECALIBRATOR_SHMEM_NAME);
+
+	debugTransform = Eigen::Vector3d::Zero();
+	debugRotation = Eigen::Quaterniond::Identity();
 
 	return vr::VRInitError_None;
 }
@@ -100,6 +105,14 @@ void ServerTrackedDeviceProvider::SetDeviceTransform(const protocol::SetDeviceTr
 
 bool ServerTrackedDeviceProvider::HandleDevicePoseUpdated(uint32_t openVRID, vr::DriverPose_t &pose)
 {
+	// Apply debug pose before anything else
+	auto dbgPos = convert(pose.vecPosition) + debugTransform;
+	auto dbgRot = convert(pose.qRotation) * debugRotation;
+	pose.qRotation = convert(dbgRot);
+	pose.vecPosition[0] = dbgPos(0);
+	pose.vecPosition[1] = dbgPos(1);
+	pose.vecPosition[2] = dbgPos(2);
+
 	shmem.SetPose(openVRID, pose);
 
 	auto& tf = transforms[openVRID];
@@ -146,3 +159,16 @@ bool ServerTrackedDeviceProvider::HandleDevicePoseUpdated(uint32_t openVRID, vr:
 	return true;
 }
 
+void ServerTrackedDeviceProvider::HandleApplyRandomOffset() {
+	std::random_device gen;
+	std::uniform_real_distribution<double> d(-1, 1);
+	auto init = Eigen::Vector3d(d(gen), d(gen), d(gen));
+	auto posOffset = init * 0.05f;
+
+	debugTransform = posOffset;
+	debugRotation = Eigen::Quaterniond::Identity();
+
+	std::ostringstream oss;
+	oss << "Applied random offset: " << posOffset << " from init " << init << std::endl;
+	LOG("%s", oss.str().c_str());
+}

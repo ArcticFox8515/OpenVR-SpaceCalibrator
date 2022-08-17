@@ -97,6 +97,13 @@ private:
 	bool m_isValid;
 	Eigen::AffineCompact3d m_estimatedTransformation;
 
+	/*
+	 * This affine transform estimates the pose of the target within the reference device's local pose space.
+	 * That is to say, it's given by transforming the target world pose by the inverse reference pose.
+	 */
+	Eigen::AffineCompact3d m_refToTargetPose;
+	bool m_refToTargetPoseValid;
+
 	std::deque<Sample> m_samples;
 
 	Eigen::Vector3d CalibrateRotation() const;
@@ -111,4 +118,7 @@ private:
 
 	bool ValidateCalibration(const Eigen::AffineCompact3d& calibration, double *errorOut = nullptr, Eigen::Vector3d* posOffsetV = nullptr);
 	void ComputeInstantOffset();
+
+	Eigen::AffineCompact3d EstimateRefToTargetPose(const Eigen::AffineCompact3d& calibration) const;
+	bool CalibrateByRelPose(Eigen::AffineCompact3d &out) const;
 };
