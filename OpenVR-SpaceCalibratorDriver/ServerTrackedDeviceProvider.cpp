@@ -1,6 +1,7 @@
 #include "ServerTrackedDeviceProvider.h"
 #include "Logging.h"
 #include "InterfaceHookInjector.h"
+#include "IsometryTransform.h"
 
 #include <random>
 
@@ -10,6 +11,19 @@ vr::EVRInitError ServerTrackedDeviceProvider::Init(vr::IVRDriverContext *pDriver
 	VR_INIT_SERVER_DRIVER_CONTEXT(pDriverContext);
 
 	memset(transforms, 0, vr::k_unMaxTrackedDeviceCount * sizeof DeviceTransform);
+	memset(&alignmentSpeedParams, 0, sizeof alignmentSpeedParams);
+
+	alignmentSpeedParams.thr_rot_tiny = 0.1f * (EIGEN_PI / 180.0f);
+	alignmentSpeedParams.thr_rot_small = 1.0f * (EIGEN_PI / 180.0f);
+	alignmentSpeedParams.thr_rot_large = 5.0f * (EIGEN_PI / 180.0f);
+
+	alignmentSpeedParams.thr_trans_tiny = 0.1f / 1000.0; // mm
+	alignmentSpeedParams.thr_trans_small = 1.0f / 1000.0; // mm
+	alignmentSpeedParams.thr_trans_large = 20.0f / 1000.0; // mm
+	
+	alignmentSpeedParams.align_speed_tiny = 0.05f;
+	alignmentSpeedParams.align_speed_small = 0.2f;
+	alignmentSpeedParams.align_speed_large = 2.0f;
 
 	InjectHooks(this, pDriverContext);
 	server.Run();
@@ -31,6 +45,8 @@ void ServerTrackedDeviceProvider::Cleanup()
 }
 
 namespace {
+
+
 	vr::HmdQuaternion_t convert(const Eigen::Quaterniond& q) {
 		vr::HmdQuaternion_t result;
 		result.w = q.w();
@@ -42,9 +58,9 @@ namespace {
 
 	vr::HmdVector3_t convert(const Eigen::Vector3d& v) {
 		vr::HmdVector3_t result;
-		result.v[0] = v.x();
-		result.v[1] = v.y();
-		result.v[2] = v.z();
+		result.v[0] = (float) v.x();
+		result.v[1] = (float) v.y();
+		result.v[2] = (float) v.z();
 		return result;
 	}
 
@@ -59,7 +75,92 @@ namespace {
 	Eigen::Vector3d convert(const double* arr) {
 		return Eigen::Vector3d(arr[0], arr[1], arr[2]);
 	}
+
+	IsoTransform toIsoWorldTransform(const vr::DriverPose_t& pose) {
+		Eigen::Quaterniond rot(pose.qWorldFromDriverRotation.w, pose.qWorldFromDriverRotation.x, pose.qWorldFromDriverRotation.y, pose.qWorldFromDriverRotation.z);
+		Eigen::Vector3d trans(pose.vecWorldFromDriverTranslation[0], pose.vecWorldFromDriverTranslation[1], pose.vecWorldFromDriverTranslation[2]);
+
+		return IsoTransform(rot, trans);
+	}
+
+	IsoTransform toIsoPose(const vr::DriverPose_t& pose) {
+		auto worldXform = toIsoWorldTransform(pose);
+
+		Eigen::Quaterniond rot(pose.qRotation.w, pose.qRotation.x, pose.qRotation.y, pose.qRotation.z);
+		Eigen::Vector3d trans(pose.vecPosition[0], pose.vecPosition[1], pose.vecPosition[2]);
+
+		return worldXform * IsoTransform(rot, trans);
+	}
 }
+
+
+/**
+ * This function heuristically evaluates the amount of drift between the src and target playspace transforms,
+ * evaluated centered on the `pose` device transform. This is then used to control the speed of realignment.
+ */
+ServerTrackedDeviceProvider::DeltaSize ServerTrackedDeviceProvider::GetTransformDeltaSize(
+	DeltaSize prior_delta,
+	const IsoTransform& deviceWorldPose,
+	const IsoTransform& src,
+	const IsoTransform& target
+) const {
+	const auto src_pose = src * deviceWorldPose;
+	const auto target_pose = target * deviceWorldPose;
+
+	const auto trans_delta = (src_pose.translation - target_pose.translation).squaredNorm();
+	const auto rot_delta = src_pose.rotation.angularDistance(target_pose.rotation);
+
+	DeltaSize trans_level, rot_level;
+
+	if (trans_delta > alignmentSpeedParams.thr_trans_large) trans_level = DeltaSize::LARGE;
+	else if (trans_delta > alignmentSpeedParams.thr_trans_small) trans_level = DeltaSize::SMALL;
+	else trans_level = DeltaSize::TINY;
+
+	if (rot_delta > alignmentSpeedParams.thr_rot_large) rot_level = DeltaSize::LARGE;
+	else if (rot_delta > alignmentSpeedParams.thr_rot_small) rot_level = DeltaSize::SMALL;
+	else rot_level = DeltaSize::TINY;
+
+	if (trans_level == DeltaSize::TINY && rot_level == DeltaSize::TINY) return DeltaSize::TINY;
+	else return max(prior_delta, max(trans_level, rot_level));
+}
+
+double ServerTrackedDeviceProvider::GetTransformRate(DeltaSize delta) const {
+	switch (delta) {
+	case DeltaSize::TINY: return alignmentSpeedParams.align_speed_tiny;
+	case DeltaSize::SMALL: return alignmentSpeedParams.align_speed_small;
+	default: return alignmentSpeedParams.align_speed_large;
+	}
+}
+
+/**
+ * Smoothly interpolates the device active transform towards the target transform.
+ */
+void ServerTrackedDeviceProvider::BlendTransform(DeviceTransform& device, const IsoTransform &deviceWorldPose) const {
+	LARGE_INTEGER timestamp, freq;
+	QueryPerformanceCounter(&timestamp);
+	QueryPerformanceFrequency(&freq);
+
+	double lerp = (timestamp.QuadPart - device.lastPoll.QuadPart) / (double)freq.QuadPart;
+	device.lastPoll = timestamp;
+	
+	lerp *= GetTransformRate(device.currentRate);
+	if (lerp > 1.0)
+		lerp = 1.0;
+	if (lerp < 0 || isnan(lerp))
+		lerp = 0;
+
+	device.transform = device.transform.interpolateAround(lerp, device.targetTransform, deviceWorldPose.translation);
+}
+
+void ServerTrackedDeviceProvider::ApplyTransform(DeviceTransform& device, vr::DriverPose_t& devicePose) const {
+	auto deviceWorldTransform = toIsoWorldTransform(devicePose);
+	deviceWorldTransform = device.transform * deviceWorldTransform;
+	devicePose.vecWorldFromDriverTranslation[0] = deviceWorldTransform.translation(0);
+	devicePose.vecWorldFromDriverTranslation[1] = deviceWorldTransform.translation(1);
+	devicePose.vecWorldFromDriverTranslation[2] = deviceWorldTransform.translation(2);
+	devicePose.qWorldFromDriverRotation = convert(deviceWorldTransform.rotation);
+}
+
 
 inline vr::HmdQuaternion_t operator*(const vr::HmdQuaternion_t &lhs, const vr::HmdQuaternion_t &rhs) {
 	return {
@@ -83,17 +184,17 @@ void ServerTrackedDeviceProvider::SetDeviceTransform(const protocol::SetDeviceTr
 	tf.enabled = newTransform.enabled;
 
 	if (newTransform.updateTranslation) {
-		tf.targetTranslation = convert(newTransform.translation);
+		tf.targetTransform.translation = convert(newTransform.translation);
 		if (!newTransform.lerp) {
-			tf.translation = tf.targetTranslation;
+			tf.transform.translation = tf.targetTransform.translation;
 		}
 	}
 
 	if (newTransform.updateRotation) {
-		tf.targetRotation = convert(newTransform.rotation);
+		tf.targetTransform.rotation = convert(newTransform.rotation);
 
 		if (!newTransform.lerp) {
-			tf.rotation = tf.targetRotation;
+			tf.transform.rotation = tf.targetTransform.rotation;
 		}
 	}
 
@@ -123,37 +224,16 @@ bool ServerTrackedDeviceProvider::HandleDevicePoseUpdated(uint32_t openVRID, vr:
 		pose.vecPosition[2] = -pose.vecWorldFromDriverTranslation[2];
 	} else if (tf.enabled)
 	{
-		LARGE_INTEGER timestamp, freq;
-		QueryPerformanceCounter(&timestamp);
-		QueryPerformanceFrequency(&freq);
-
-		double lerp = (timestamp.QuadPart - tf.lastPoll.QuadPart) / (double)freq.QuadPart;
-		lerp *= 2;
-		if (lerp > 1.0)
-			lerp = 1.0;
-		if (lerp < 0 || isnan(lerp))
-			lerp = 0;
-		// Cancel out any translation induced by this rotation slerp. This helps avoid your
-		// controllers/trackers flying away when far from the origin and a rotation correction
-		// is performed.
-		auto priorPos = tf.rotation * convert(pose.vecPosition);
-		tf.rotation = tf.rotation.slerp(lerp, tf.targetRotation);
-		auto newPos = tf.rotation * convert(pose.vecPosition);
-		tf.translation -= newPos - priorPos;
-
-		tf.translation = tf.translation * (1 - lerp) + tf.targetTranslation * lerp;
-		tf.lastPoll = timestamp;
-		
-		pose.qWorldFromDriverRotation = convert(tf.rotation * convert(pose.qWorldFromDriverRotation));
-
 		pose.vecPosition[0] *= tf.scale;
 		pose.vecPosition[1] *= tf.scale;
 		pose.vecPosition[2] *= tf.scale;
 
-		auto newTranslation = tf.translation + tf.rotation * convert(pose.vecWorldFromDriverTranslation);
-		pose.vecWorldFromDriverTranslation[0] = newTranslation.x();
-		pose.vecWorldFromDriverTranslation[1] = newTranslation.y();
-		pose.vecWorldFromDriverTranslation[2] = newTranslation.z();
+		auto deviceWorldPose = toIsoPose(pose);
+		tf.currentRate = GetTransformDeltaSize(tf.currentRate, deviceWorldPose, tf.transform, tf.targetTransform);
+		double lerp = GetTransformRate(tf.currentRate);
+
+		BlendTransform(tf, deviceWorldPose);
+		ApplyTransform(tf, pose);
 	}
 
 	return true;
@@ -163,7 +243,7 @@ void ServerTrackedDeviceProvider::HandleApplyRandomOffset() {
 	std::random_device gen;
 	std::uniform_real_distribution<double> d(-1, 1);
 	auto init = Eigen::Vector3d(d(gen), d(gen), d(gen));
-	auto posOffset = init * 0.05f;
+	auto posOffset = init * 0.25f;
 
 	debugTransform = posOffset;
 	debugRotation = Eigen::Quaterniond::Identity();

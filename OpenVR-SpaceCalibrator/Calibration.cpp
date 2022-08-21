@@ -234,6 +234,10 @@ void ScanAndApplyProfile(CalibrationContext &ctx)
 	char* buffer = buffer_array.get();
 	ctx.enabled = ctx.validProfile;
 
+	protocol::Request setParamsReq(protocol::RequestSetAlignmentSpeedParams);
+	setParamsReq.setAlignmentSpeedParams = ctx.alignmentSpeedParams;
+	Driver.SendBlocking(setParamsReq);
+
 	for (uint32_t id = 0; id < vr::k_unMaxTrackedDeviceCount; ++id)
 	{
 		auto deviceClass = vr::VRSystem()->GetTrackedDeviceClass(id);
@@ -451,7 +455,7 @@ void CalibrationTick(double time)
 		return;
 	}
 
-	CalCtx.Progress(calibration.SampleCount(), CalCtx.SampleCount());
+	CalCtx.Progress(calibration.SampleCount(), (int)CalCtx.SampleCount());
 
 	while (calibration.SampleCount() > CalCtx.SampleCount()) calibration.ShiftSample();
 
@@ -526,7 +530,7 @@ void LoadChaperoneBounds()
 void ApplyChaperoneBounds()
 {
 	vr::VRChaperoneSetup()->RevertWorkingCopy();
-	vr::VRChaperoneSetup()->SetWorkingCollisionBoundsInfo(&CalCtx.chaperone.geometry[0], CalCtx.chaperone.geometry.size());
+	vr::VRChaperoneSetup()->SetWorkingCollisionBoundsInfo(&CalCtx.chaperone.geometry[0], (uint32_t)CalCtx.chaperone.geometry.size());
 	vr::VRChaperoneSetup()->SetWorkingStandingZeroPoseToRawTrackingPose(&CalCtx.chaperone.standingCenter);
 	vr::VRChaperoneSetup()->SetWorkingPlayAreaSize(CalCtx.chaperone.playSpaceSize.v[0], CalCtx.chaperone.playSpaceSize.v[1]);
 	vr::VRChaperoneSetup()->CommitWorkingCopy(vr::EChaperoneConfigFile_Live);

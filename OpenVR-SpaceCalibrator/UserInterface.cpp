@@ -87,6 +87,7 @@ void ShowVersionLine() {
 }
 
 void CCal_BasicInfo();
+void CCal_AlignParams();
 
 void BuildContinuousCalDisplay() {
 	ImGui::SetNextWindowPos(ImVec2(0, 0));
@@ -118,6 +119,12 @@ void BuildContinuousCalDisplay() {
 			ShowCalibrationDebug(2, 3);
 			ImGui::EndTabItem();
 		}
+		
+		if (ImGui::BeginTabItem("Alignment speeds")) {
+			CCal_AlignParams();
+			ImGui::EndTabItem();
+		}
+
 		ImGui::EndTabBar();
 	}
 
@@ -126,6 +133,61 @@ void BuildContinuousCalDisplay() {
 	ShowVersionLine();
 
 	ImGui::End();
+}
+
+static void ScaledDragFloat(const char* label, double& f, double scale, double min, double max) {
+	float v = (float) (f * scale);
+	
+	ImGui::DragFloat(label, &v, (float)0.01f, (float)min, (float)max);
+	
+	f = v / scale;
+}
+
+void CCal_AlignParams() {
+	ImGui::Text("Speed thresholds");
+	if (ImGui::BeginTable("SpeedThresholds", 3, 0)) {
+		ImGui::TableNextRow();
+		ImGui::TableSetColumnIndex(1);
+		ImGui::Text("Translation (mm)");
+		ImGui::TableSetColumnIndex(2);
+		ImGui::Text("Rotation (degrees)");
+		
+		
+		ImGui::TableNextRow();
+		ImGui::TableSetColumnIndex(0);
+		ImGui::Text("Decel");
+		ImGui::TableSetColumnIndex(1);
+		ScaledDragFloat("##TransDecel", CalCtx.alignmentSpeedParams.thr_trans_tiny, 1000.0, 0, 20.0);
+		ImGui::TableSetColumnIndex(2);
+		ScaledDragFloat("##RotDecel", CalCtx.alignmentSpeedParams.thr_rot_tiny, 180.0 / EIGEN_PI, 0, 5.0);
+		
+		ImGui::TableNextRow();
+		ImGui::TableSetColumnIndex(0);
+		ImGui::Text("Slow");
+		ImGui::TableSetColumnIndex(1);
+		ScaledDragFloat("##TransSlow", CalCtx.alignmentSpeedParams.thr_trans_small, 1000.0,
+			CalCtx.alignmentSpeedParams.thr_trans_tiny * 1000.0, 20.0);
+		ImGui::TableSetColumnIndex(2);
+		ScaledDragFloat("##RotSlow", CalCtx.alignmentSpeedParams.thr_rot_small, 180.0 / EIGEN_PI,
+			CalCtx.alignmentSpeedParams.thr_rot_tiny * (180.0 / EIGEN_PI), 10.0);
+
+		ImGui::TableNextRow();
+		ImGui::TableSetColumnIndex(0);
+		ImGui::Text("Fast");
+		ImGui::TableSetColumnIndex(1);
+		ScaledDragFloat("##TransFast", CalCtx.alignmentSpeedParams.thr_trans_large, 1000.0,
+			CalCtx.alignmentSpeedParams.thr_trans_small * 1000.0, 50.0);
+		ImGui::TableSetColumnIndex(2);
+		ScaledDragFloat("##RotFast", CalCtx.alignmentSpeedParams.thr_rot_large, 180.0 / EIGEN_PI,
+			CalCtx.alignmentSpeedParams.thr_rot_small * (180.0 / EIGEN_PI), 20.0);
+
+		ImGui::EndTable();
+	}
+
+	ImGui::Text("Alignment rate");
+	ScaledDragFloat("Decel", CalCtx.alignmentSpeedParams.align_speed_tiny, 1.0, 0, 1.0);
+	ScaledDragFloat("Slow", CalCtx.alignmentSpeedParams.align_speed_small, 1.0, 0, 1.0);
+	ScaledDragFloat("Fast", CalCtx.alignmentSpeedParams.align_speed_large, 1.0, 0, 1.0);
 }
 
 void CCal_BasicInfo() {

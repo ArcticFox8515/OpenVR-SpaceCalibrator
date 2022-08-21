@@ -93,6 +93,7 @@
     <ClInclude Include="Hooking.h" />
     <ClInclude Include="InterfaceHookInjector.h" />
     <ClInclude Include="IPCServer.h" />
+    <ClInclude Include="IsometryTransform.h" />
     <ClInclude Include="Logging.h" />
     <ClInclude Include="OpenVR-SpaceCalibratorDriver.h" />
     <ClInclude Include="ServerTrackedDeviceProvider.h" />

@@ -335,7 +335,7 @@ Eigen::Vector4d CalibrationCalc::ComputeAxisVariance(
 
 		points.push_back(point);
 	}
-	mean /= points.size();
+	mean /= (double) points.size();
 
 	// Compute covariance matrix
 	Eigen::Matrix4d covMatrix = Eigen::Matrix4d::Zero();
@@ -347,7 +347,7 @@ Eigen::Vector4d CalibrationCalc::ComputeAxisVariance(
 			}
 		}
 	}
-	covMatrix /= points.size();
+	covMatrix /= (double) points.size();
 
 	Eigen::SelfAdjointEigenSolver<Eigen::Matrix4d> solver;
 	solver.compute(covMatrix);
@@ -359,9 +359,10 @@ bool CalibrationCalc::ValidateCalibration(const Eigen::AffineCompact3d &calibrat
 	bool ok = true;
 
 	const auto posOffset = ComputeRefToTargetOffset(calibration);
-	char buf[256];
+
 	if (posOffsetV) *posOffsetV = posOffset;
 
+	// char buf[256];
 	//snprintf(buf, sizeof buf, "HMD to target offset: (%.2f, %.2f, %.2f)\n", posOffset(0), posOffset(1), posOffset(2));
 	//CalCtx.Log(buf);
 
@@ -578,16 +579,20 @@ bool CalibrationCalc::ComputeIncremental(bool &lerp) {
 	// Now, can we use the relative pose to perform a rapid correction?
 	Eigen::AffineCompact3d byRelPose;
 	bool relPoseAvailable = CalibrateByRelPose(byRelPose);
-	double relPoseError, existingPoseErrorUsingRelPosition = 0;
+	double relPoseError = INFINITY, existingPoseErrorUsingRelPosition = 0;
 	Eigen::Vector3d relPosOffset;
-	bool relPoseValid = relPoseAvailable && ValidateCalibration(byRelPose, &relPoseError, &relPosOffset);
-	if (m_refToTargetPoseValid) {
+	bool relPoseValid;
+	if (relPoseAvailable) {
+		relPoseValid = ValidateCalibration(byRelPose, &relPoseError, &relPosOffset);
 		Metrics::posOffset_byRelPose.Push(relPosOffset * 1000);
 		Metrics::error_byRelPose.Push(relPoseError * 1000);
 		existingPoseErrorUsingRelPosition = RetargetingErrorRMS(m_refToTargetPose.translation(), m_estimatedTransformation);
 		Metrics::error_currentCalRelPose.Push(existingPoseErrorUsingRelPosition * 1000);
 	}
-	if (!ok && relPoseValid && relPoseError * 1.5 + 0.005 < existingPoseErrorUsingRelPosition) {
+	else {
+		relPoseValid = false;
+	}
+	if (!ok && relPoseValid && relPoseError * 1.5 < existingPoseErrorUsingRelPosition) {
 		usingRelPose = true;
 		newError = relPoseError;
 		calibration = byRelPose;

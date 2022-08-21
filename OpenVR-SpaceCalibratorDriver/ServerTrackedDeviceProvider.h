@@ -4,6 +4,7 @@
 
 #include "IPCServer.h"
 #include "../Protocol.h"
+#include "IsometryTransform.h"
 
 #include <Eigen/Dense>
 
@@ -44,22 +45,47 @@ public:
 	void SetDeviceTransform(const protocol::SetDeviceTransform &newTransform);
 	bool HandleDevicePoseUpdated(uint32_t openVRID, vr::DriverPose_t &pose);
 	void HandleApplyRandomOffset();
+	void HandleSetAlignmentSpeedParams(const protocol::AlignmentSpeedParams params) {
+		alignmentSpeedParams = params;
+	}
 
 private:
 	IPCServer server;
 	protocol::DriverPoseShmem shmem;
 
+	enum DeltaSize {
+		TINY,
+		SMALL,
+		LARGE
+	};
+
 	struct DeviceTransform
 	{
 		bool enabled = false;
 		bool quash = false;
-		Eigen::Vector3d translation, targetTranslation;
-		Eigen::Quaterniond rotation, targetRotation;
+		IsoTransform transform, targetTransform;
 		double scale;
 		LARGE_INTEGER lastPoll;
+		DeltaSize currentRate = DeltaSize::TINY;
 	};
 
 	DeviceTransform transforms[vr::k_unMaxTrackedDeviceCount];
 	Eigen::Vector3d debugTransform;
 	Eigen::Quaterniond debugRotation;
+
+	DeltaSize currentDeltaSpeed[vr::k_unMaxTrackedDeviceCount];
+
+	protocol::AlignmentSpeedParams alignmentSpeedParams;
+
+	DeltaSize GetTransformDeltaSize(
+		DeltaSize prior_delta,
+		const IsoTransform& deviceWorldPose,
+		const IsoTransform& src,
+		const IsoTransform& target
+	) const;
+
+	double GetTransformRate(DeltaSize delta) const;
+
+	void BlendTransform(DeviceTransform& device, const IsoTransform& deviceWorldPose) const;
+	void ApplyTransform(DeviceTransform& device, vr::DriverPose_t& devicePose) const;
 };

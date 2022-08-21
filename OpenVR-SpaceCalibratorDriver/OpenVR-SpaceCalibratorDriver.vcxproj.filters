@@ -39,6 +39,9 @@
     <ClInclude Include="InterfaceHookInjector.h">
       <Filter>Header Files</Filter>
     </ClInclude>
+    <ClInclude Include="IsometryTransform.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="OpenVR-SpaceCalibratorDriver.cpp">

@@ -99,6 +99,7 @@ namespace protocol
 		RequestInvalid,
 		RequestHandshake,
 		RequestSetDeviceTransform,
+		RequestSetAlignmentSpeedParams,
 		RequestDebugOffset
 	};
 
@@ -112,6 +113,29 @@ namespace protocol
 	struct Protocol
 	{
 		uint32_t version = Version;
+	};
+
+	struct AlignmentSpeedParams
+	{
+		/**
+		 * The threshold at which we adjust the alignment speed based on the position offset
+		 * between current and target calibrations. Generally, we increase the speed if we go
+		 * above small/large, and decrease it only once it's under tiny.
+		 * 
+		 * These values are expressed as distance squared
+		 */
+		double thr_trans_tiny, thr_trans_small, thr_trans_large;
+
+		/**
+		 * Similar thresholds for rotation offsets, in radians
+		 */
+		double thr_rot_tiny, thr_rot_small, thr_rot_large;
+		
+		/**
+		 * The speed of alignment, expressed as a lerp/slerp factor. 1 will blend most of the way in <1 second.
+		 * (We actually do a lerp(s * delta_t) where s is the speed factor here)
+		 */
+		double align_speed_tiny, align_speed_small, align_speed_large;
 	};
 
 	struct SetDeviceTransform
@@ -152,10 +176,12 @@ namespace protocol
 
 		union {
 			SetDeviceTransform setDeviceTransform;
+			AlignmentSpeedParams setAlignmentSpeedParams;
 		};
 
 		Request() : type(RequestInvalid) { }
 		Request(RequestType type) : type(type) { }
+		Request(AlignmentSpeedParams params) : type(RequestType::RequestSetAlignmentSpeedParams), setAlignmentSpeedParams(params) {}
 	};
 
 	struct Response

@@ -45,6 +45,8 @@ struct CalibrationContext
 	double timeLastTick = 0, timeLastScan = 0;
 	double wantedUpdateInterval = 1.0;
 
+	protocol::AlignmentSpeedParams alignmentSpeedParams;
+
 	enum Speed
 	{
 		FAST = 0,
@@ -54,6 +56,20 @@ struct CalibrationContext
 	Speed calibrationSpeed = FAST;
 
 	vr::DriverPose_t devicePoses[vr::k_unMaxTrackedDeviceCount];
+
+	CalibrationContext() {
+		alignmentSpeedParams.thr_rot_tiny = 0.49f * (EIGEN_PI / 180.0f);
+		alignmentSpeedParams.thr_rot_small = 0.5f * (EIGEN_PI / 180.0f);
+		alignmentSpeedParams.thr_rot_large = 5.0f * (EIGEN_PI / 180.0f);
+
+		alignmentSpeedParams.thr_trans_tiny = 0.98f / 1000.0; // mm
+		alignmentSpeedParams.thr_trans_small = 1.0f / 1000.0; // mm
+		alignmentSpeedParams.thr_trans_large = 20.0f / 1000.0; // mm
+
+		alignmentSpeedParams.align_speed_tiny = 0.2f;
+		alignmentSpeedParams.align_speed_small = 0.2f;
+		alignmentSpeedParams.align_speed_large = 2.0f;
+	}
 
 	struct Chaperone
 	{
