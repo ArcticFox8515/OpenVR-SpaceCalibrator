@@ -3,6 +3,7 @@
 #include "Calibration.h"
 #include "Configuration.h"
 #include "VRState.h"
+#include "CalibrationMetrics.h"
 #include "../Version.h"
 
 #include <thread>
@@ -67,8 +68,6 @@ void BuildMainWindow(bool runningInOverlay_)
 
 	ImGui::PopStyleColor();
 	ImGui::End();
-
-	ImGui::ShowDemoWindow();
 }
 
 void ShowVersionLine() {
@@ -263,6 +262,8 @@ void CCal_BasicInfo() {
 	ImGui::Checkbox("Hide target device from application", &CalCtx.quashTargetInContinuous);
 	ImGui::SameLine();
 	ImGui::Checkbox("Enable static recalibration", &CalCtx.enableStaticRecalibration);
+	ImGui::SameLine();
+	ImGui::Checkbox("Enable debug logs", &Metrics::enableLogs);
 
 	// Status field...
 

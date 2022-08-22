@@ -309,7 +309,7 @@ void ShowCalibrationDebug(int rows, int cols) {
 	static std::vector<int> curIndexes;
 
 	//ImGui::ShowDemoWindow();
-	ImPlot::ShowDemoWindow();
+	//ImPlot::ShowDemoWindow();
 
 	double initMouseX = lastMouseX;
 	wasHovered = false;

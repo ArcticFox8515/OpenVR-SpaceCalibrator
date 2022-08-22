@@ -37,9 +37,11 @@ namespace Metrics {
 		CurrentTime = timestamp();
 	}
 
+	bool enableLogs = false;
+
 	static std::ofstream logFile;
-	bool logFileIsOpen = false;
-	bool failedToOpenLogFile = false;
+	static bool logFileIsOpen = false;
+	static bool failedToOpenLogFile = false;
 
 	struct CsvField {
 		const char* name;
@@ -89,7 +91,7 @@ namespace Metrics {
 	
 	
 	static void ClearOldLogs(const std::wstring& path) {
-		std::wstring search_path = path + L"spacecal_log.*.txt";
+		std::wstring search_path = path + L"\\spacecal_log.*.txt";
 		WIN32_FIND_DATA find_data;
 
 		SYSTEMTIME st_now;
@@ -168,18 +170,38 @@ namespace Metrics {
 		logFile << "\n";
 
 		logFileIsOpen = true;
+
+		return true;
+	}
+	
+	static bool CheckLogOpen() {
+		if (!enableLogs) {
+			if (logFileIsOpen) {
+				logFile.close();
+			}
+			logFileIsOpen = false;
+			failedToOpenLogFile = false;
+
+			return false;
+		}
+
+		if (failedToOpenLogFile) return false;
+		if (!logFileIsOpen && !OpenLogFile()) {
+			failedToOpenLogFile = true;
+			return false;
+		}
+		return true;
 	}
 
 	void WriteLogAnnotation(const char *s) {
+		if (!CheckLogOpen()) return;
+
 		logFile << "# [" << timestamp() << "] " << s << "\n";
 		logFile.flush();
 	}
 
 	void WriteLogEntry() {
-		if (failedToOpenLogFile) return;
-		if (!logFileIsOpen && !OpenLogFile()) {
-			failedToOpenLogFile = true;
-		}
+		if (!CheckLogOpen()) return;
 
 		if (logFileIsOpen) {
 			for (int i = 0; i < sizeof fields / sizeof fields[0]; i++) {

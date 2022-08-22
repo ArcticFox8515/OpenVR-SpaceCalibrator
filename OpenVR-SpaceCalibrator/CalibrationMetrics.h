@@ -51,6 +51,8 @@ namespace Metrics {
 
 	extern TimeSeries<bool> calibrationApplied;
 
+	extern bool enableLogs;
+
 	void WriteLogAnnotation(const char* s);
 	void WriteLogEntry();
 }
