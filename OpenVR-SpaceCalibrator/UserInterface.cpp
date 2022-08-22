@@ -204,7 +204,19 @@ void CCal_BasicInfo() {
 			CalCtx.referenceStandby.model.c_str(),
 			CalCtx.referenceStandby.serial.c_str()
 		);
-		ImGui::Text("Status: %s", CalCtx.referenceID >= 0 ? "DETECTED" : "Waiting...");
+		const char* status;
+		if (CalCtx.referenceID < 0) {
+			ImGui::TableSetBgColor(ImGuiTableBgTarget_CellBg, 0xFF000080);
+			status = "NOT FOUND";
+		}
+		else if (!CalCtx.ReferencePoseIsValid()) {
+			ImGui::TableSetBgColor(ImGuiTableBgTarget_CellBg, 0xFFFF0080);
+			status = "NOT TRACKING";
+		}
+		else {
+			status = "OK";
+		}
+		ImGui::Text("Status: %s", status);
 		ImGui::EndGroup();
 
 		ImGui::TableSetColumnIndex(1);
@@ -214,7 +226,18 @@ void CCal_BasicInfo() {
 			CalCtx.targetStandby.model.c_str(),
 			CalCtx.targetStandby.serial.c_str()
 		);
-		ImGui::Text("Status: %s", CalCtx.targetID >= 0 ? "DETECTED" : "Waiting...");
+		if (CalCtx.targetID < 0) {
+			ImGui::TableSetBgColor(ImGuiTableBgTarget_CellBg, 0xFF000080);
+			status = "NOT FOUND";
+		}
+		else if (!CalCtx.TargetPoseIsValid()) {
+			ImGui::TableSetBgColor(ImGuiTableBgTarget_CellBg, 0xFFFF0080);
+			status = "NOT TRACKING";
+		}
+		else {
+			status = "OK";
+		}
+		ImGui::Text("Status: %s", status);
 		ImGui::EndGroup();
 
 		ImGui::EndTable();
@@ -230,7 +253,7 @@ void CCal_BasicInfo() {
 		}
 
 		ImGui::TableSetColumnIndex(1);
-		if (ImGui::Button("DEBUG OFFSET", ImVec2(-FLT_MIN, 0.0f))) {
+		if (ImGui::Button("Debug: Force break calibration", ImVec2(-FLT_MIN, 0.0f))) {
 			DebugApplyRandomOffset();
 		}
 
@@ -238,6 +261,8 @@ void CCal_BasicInfo() {
 	}
 
 	ImGui::Checkbox("Hide target device from application", &CalCtx.quashTargetInContinuous);
+	ImGui::SameLine();
+	ImGui::Checkbox("Enable static recalibration", &CalCtx.enableStaticRecalibration);
 
 	// Status field...
 

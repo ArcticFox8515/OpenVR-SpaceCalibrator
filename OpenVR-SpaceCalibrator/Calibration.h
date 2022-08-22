@@ -46,6 +46,7 @@ struct CalibrationContext
 	double wantedUpdateInterval = 1.0;
 
 	protocol::AlignmentSpeedParams alignmentSpeedParams;
+	bool enableStaticRecalibration;
 
 	enum Speed
 	{
@@ -58,6 +59,12 @@ struct CalibrationContext
 	vr::DriverPose_t devicePoses[vr::k_unMaxTrackedDeviceCount];
 
 	CalibrationContext() {
+		calibratedScale = 1.0;
+		memset(devicePoses, 0, sizeof(devicePoses));
+		ResetConfig();
+	}
+
+	void ResetConfig() {
 		alignmentSpeedParams.thr_rot_tiny = 0.49f * (EIGEN_PI / 180.0f);
 		alignmentSpeedParams.thr_rot_small = 0.5f * (EIGEN_PI / 180.0f);
 		alignmentSpeedParams.thr_rot_large = 5.0f * (EIGEN_PI / 180.0f);
@@ -69,6 +76,8 @@ struct CalibrationContext
 		alignmentSpeedParams.align_speed_tiny = 0.2f;
 		alignmentSpeedParams.align_speed_small = 0.2f;
 		alignmentSpeedParams.align_speed_large = 2.0f;
+
+		enableStaticRecalibration = true;
 	}
 
 	struct Chaperone
@@ -155,6 +164,16 @@ struct CalibrationContext
 
 		messages.back().progress = current;
 		messages.back().target = target;
+	}
+
+	bool TargetPoseIsValid() const {
+		return targetID >= 0 && targetID <= vr::k_unMaxTrackedDeviceCount
+			&& devicePoses[targetID].poseIsValid;
+	}
+
+	bool ReferencePoseIsValid() const {
+		return referenceID >= 0 && referenceID <= vr::k_unMaxTrackedDeviceCount
+			&& devicePoses[referenceID].poseIsValid;
 	}
 };
 

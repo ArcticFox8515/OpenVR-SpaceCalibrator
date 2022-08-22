@@ -38,6 +38,7 @@ namespace Metrics {
 	
 	extern TimeSeries<double> error_rawComputed, error_currentCal, error_byRelPose, error_currentCalRelPose;
 	extern TimeSeries<double> axisIndependence;
+	extern TimeSeries<double> computationTime;
 
 	extern TimeSeries<bool> calibrationApplied;
 }

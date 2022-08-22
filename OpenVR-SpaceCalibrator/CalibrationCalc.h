@@ -57,6 +57,8 @@ struct Sample
 class CalibrationCalc {
 public:
 	static const double AxisVarianceThreshold;
+
+	bool enableStaticRecalibration;
 	
 	const Eigen::AffineCompact3d Transformation() const 
 	{
@@ -86,7 +88,7 @@ public:
 		if (!m_samples.empty()) m_samples.pop_front();
 	}
 
-	CalibrationCalc() : m_isValid(false), m_calcCycle(0) {}
+	CalibrationCalc() : m_isValid(false), m_calcCycle(0), enableStaticRecalibration(true) {}
 
 	// Debug fields
 	Eigen::Vector3d m_posOffset;

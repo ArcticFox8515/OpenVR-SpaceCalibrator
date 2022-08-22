@@ -564,7 +564,7 @@ bool CalibrationCalc::ComputeIncremental(bool &lerp) {
 	if (ok) stableCt++;
 	else stableCt = 0;
 	
-	bool oldCalibrationBetter = !valid || (m_isValid && priorCalibrationError < newError * 4); // +0.00025 + 0.005 / stableCt;
+	bool oldCalibrationBetter = !valid || (m_isValid && priorCalibrationError < newError * 1.5); // +0.00025 + 0.005 / stableCt;
 
 #if 0
 		char tmp[256];
@@ -582,7 +582,7 @@ bool CalibrationCalc::ComputeIncremental(bool &lerp) {
 	double relPoseError = INFINITY, existingPoseErrorUsingRelPosition = 0;
 	Eigen::Vector3d relPosOffset;
 	bool relPoseValid;
-	if (relPoseAvailable) {
+	if (relPoseAvailable && enableStaticRecalibration) {
 		relPoseValid = ValidateCalibration(byRelPose, &relPoseError, &relPosOffset);
 		Metrics::posOffset_byRelPose.Push(relPosOffset * 1000);
 		Metrics::error_byRelPose.Push(relPoseError * 1000);

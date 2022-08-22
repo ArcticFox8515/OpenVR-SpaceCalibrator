@@ -1,5 +1,6 @@
 #include "stdafx.h"
 #include "Calibration.h"
+#include "CalibrationMetrics.h"
 #include "Configuration.h"
 #include "IPCClient.h"
 #include "CalibrationCalc.h"
@@ -419,16 +420,15 @@ void CalibrationTick(double time)
 		snprintf(buf, sizeof buf, "Target device ID: %d, serial %s\n", ctx.targetID, targetSerial);
 		CalCtx.Log(buf);
 
-		if (!ctx.devicePoses[ctx.referenceID].poseIsValid)
+		if (!CalCtx.ReferencePoseIsValid())
 		{
 			CalCtx.Log("Reference device is not tracking\n"); ok = false;
 		}
 
-		if (!ctx.devicePoses[ctx.targetID].poseIsValid)
+		if (!CalCtx.TargetPoseIsValid())
 		{
 			CalCtx.Log("Target device is not tracking\n"); ok = false;
 		}
-
 
 		if (ok) {
 			//ResetAndDisableOffsets(ctx.targetID);
@@ -468,9 +468,11 @@ void CalibrationTick(double time)
 
 		if (CalCtx.state == CalibrationState::Continuous) {
 			CalCtx.messages.clear();
+			calibration.enableStaticRecalibration = CalCtx.enableStaticRecalibration;
 			ok = calibration.ComputeIncremental(lerp);
 		}
 		else {
+			calibration.enableStaticRecalibration = false;
 			ok = calibration.ComputeOneshot();
 		}
 
@@ -498,11 +500,8 @@ void CalibrationTick(double time)
 		LARGE_INTEGER freq;
 		QueryPerformanceFrequency(&freq);
 		double duration = (end_time.QuadPart - start_time.QuadPart) / (double)freq.QuadPart;
-		char buf[256];
-		snprintf(buf, sizeof buf, "Elapsed time for computation: %0.2f\n", duration * 1000.0);
+		Metrics::computationTime.Push(duration * 1000.0);
 		
-		CalCtx.Log(buf);
-
 		if (CalCtx.state != CalibrationState::Continuous) {
 			ctx.state = CalibrationState::None;
 			calibration.Clear();

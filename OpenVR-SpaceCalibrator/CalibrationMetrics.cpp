@@ -11,6 +11,7 @@ namespace Metrics {
 
 	TimeSeries<double> error_rawComputed, error_currentCal, error_byRelPose, error_currentCalRelPose;
 	TimeSeries<double> axisIndependence;
+	TimeSeries<double> computationTime;
 
 	TimeSeries<bool> calibrationApplied;
 

@@ -207,12 +207,14 @@ void ServerTrackedDeviceProvider::SetDeviceTransform(const protocol::SetDeviceTr
 bool ServerTrackedDeviceProvider::HandleDevicePoseUpdated(uint32_t openVRID, vr::DriverPose_t &pose)
 {
 	// Apply debug pose before anything else
-	auto dbgPos = convert(pose.vecPosition) + debugTransform;
-	auto dbgRot = convert(pose.qRotation) * debugRotation;
-	pose.qRotation = convert(dbgRot);
-	pose.vecPosition[0] = dbgPos(0);
-	pose.vecPosition[1] = dbgPos(1);
-	pose.vecPosition[2] = dbgPos(2);
+	if (openVRID > 0) {
+		auto dbgPos = convert(pose.vecPosition) + debugTransform;
+		auto dbgRot = convert(pose.qRotation) * debugRotation;
+		pose.qRotation = convert(dbgRot);
+		pose.vecPosition[0] = dbgPos(0);
+		pose.vecPosition[1] = dbgPos(1);
+		pose.vecPosition[2] = dbgPos(2);
+	}
 
 	shmem.SetPose(openVRID, pose);
 

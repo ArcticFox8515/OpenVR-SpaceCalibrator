@@ -208,6 +208,19 @@ namespace {
 		}
 	}
 
+	void G_ComputationTime() {
+		if (ImPlot::BeginPlot("##Computation Time", ImVec2(-1, 0), ImPlotFlags_NoLegend)) {
+			ImPlot::SetupAxes(NULL, "ms", 0, ImPlotAxisFlags_AutoFit | ImPlotAxisFlags_RangeFit);
+			SetupXAxis();
+			ImPlot::SetupAxisLimits(ImAxis_Y1, 0, 200, ImGuiCond_Appearing);
+
+			AddApplyTicks();
+
+			PlotLineG("Time", Metrics::computationTime);
+			ImPlot::EndPlot();
+		}
+	}
+
 	void G_AxisVariance() {
 		static bool firstrun = true;
 		static ImPlotColormap axisVarianceColormap;
@@ -281,6 +294,7 @@ namespace {
 		{ "Offset: Current Calibration", G_PosOffset_CurrentCal },
 		{ "Offset: Last Sample", G_PosOffset_LastSample },
 		{ "Offset: By Rel Pose", G_PosOffset_ByRelPose },
+		{ "Processing time", G_ComputationTime }
 	};
 
 	const int N_GRAPHS = sizeof(graphs) / sizeof(graphs[0]);
