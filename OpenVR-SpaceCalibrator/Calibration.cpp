@@ -326,17 +326,20 @@ void StartCalibration()
 	CalCtx.wantedUpdateInterval = 0.0;
 	CalCtx.messages.clear();
 	calibration.Clear();
+	Metrics::WriteLogAnnotation("StartCalibration");
 }
 
 void StartContinuousCalibration() {
 	StartCalibration();
 	CalCtx.state = CalibrationState::Continuous;
 	CalCtx.Log("Collecting initial samples...");
+	Metrics::WriteLogAnnotation("StartContinuousCalibration");
 }
 
 void EndContinuousCalibration() {
 	CalCtx.state = CalibrationState::None;
 	SaveProfile(CalCtx);
+	Metrics::WriteLogAnnotation("EndContinuousCalibration");
 }
 
 void CalibrationTick(double time)
@@ -501,6 +504,8 @@ void CalibrationTick(double time)
 		QueryPerformanceFrequency(&freq);
 		double duration = (end_time.QuadPart - start_time.QuadPart) / (double)freq.QuadPart;
 		Metrics::computationTime.Push(duration * 1000.0);
+
+		Metrics::WriteLogEntry();
 		
 		if (CalCtx.state != CalibrationState::Continuous) {
 			ctx.state = CalibrationState::None;

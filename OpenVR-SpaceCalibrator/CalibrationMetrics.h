@@ -28,6 +28,15 @@ namespace Metrics {
 
 		int size() const { return (int)Data.size(); }
 		const std::pair<double, T>& operator[](int index) const { return Data[index]; }
+
+		const T& last() const {
+			static const T fallback;
+			return Data.size() > 0 ? Data.back().second : fallback;
+		}
+
+		const double lastTs() const {
+			return Data.size() > 0 ? Data.back().first : 0;
+		}
 	};
 
 
@@ -41,4 +50,7 @@ namespace Metrics {
 	extern TimeSeries<double> computationTime;
 
 	extern TimeSeries<bool> calibrationApplied;
+
+	void WriteLogAnnotation(const char* s);
+	void WriteLogEntry();
 }
