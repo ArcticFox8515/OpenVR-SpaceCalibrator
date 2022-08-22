@@ -92,7 +92,7 @@ namespace vr {
 
 namespace protocol
 {
-	const uint32_t Version = 3;
+	const uint32_t Version = 4;
 
 	enum RequestType
 	{
