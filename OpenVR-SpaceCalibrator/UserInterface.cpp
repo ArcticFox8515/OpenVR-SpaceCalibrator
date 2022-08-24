@@ -244,7 +244,7 @@ void CCal_BasicInfo() {
 
 	float width = ImGui::GetWindowContentRegionWidth(), scale = 1.0f;
 
-	if (ImGui::BeginTable("##CCal_Cancel", 2, 0, ImVec2(width * scale, ImGui::GetTextLineHeight() * 2))) {
+	if (ImGui::BeginTable("##CCal_Cancel", Metrics::enableLogs ? 3 : 2, 0, ImVec2(width * scale, ImGui::GetTextLineHeight() * 2))) {
 		ImGui::TableNextRow();
 		ImGui::TableSetColumnIndex(0);
 		if (ImGui::Button("Cancel Continuous Calibration", ImVec2(-FLT_MIN, 0.0f))) {
@@ -254,6 +254,13 @@ void CCal_BasicInfo() {
 		ImGui::TableSetColumnIndex(1);
 		if (ImGui::Button("Debug: Force break calibration", ImVec2(-FLT_MIN, 0.0f))) {
 			DebugApplyRandomOffset();
+		}
+
+		if (Metrics::enableLogs) {
+			ImGui::TableSetColumnIndex(2);
+			if (ImGui::Button("Debug: Mark logs", ImVec2(-FLT_MIN, 0.0f))) {
+				Metrics::WriteLogAnnotation("MARK LOGS");
+			}
 		}
 
 		ImGui::EndTable();
