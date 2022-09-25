@@ -73,8 +73,8 @@ struct CalibrationContext
 		alignmentSpeedParams.thr_trans_small = 1.0f / 1000.0; // mm
 		alignmentSpeedParams.thr_trans_large = 20.0f / 1000.0; // mm
 
-		alignmentSpeedParams.align_speed_tiny = 0.2f;
-		alignmentSpeedParams.align_speed_small = 0.2f;
+		alignmentSpeedParams.align_speed_tiny = 1.0f;
+		alignmentSpeedParams.align_speed_small = 1.0f;
 		alignmentSpeedParams.align_speed_large = 2.0f;
 
 		enableStaticRecalibration = true;
