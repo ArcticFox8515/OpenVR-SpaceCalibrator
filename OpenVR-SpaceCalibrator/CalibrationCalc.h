@@ -78,7 +78,7 @@ public:
 	void Clear();
 
 	bool ComputeOneshot();
-	bool ComputeIncremental(bool &lerp);
+	bool ComputeIncremental(bool &lerp, double threshold);
 
 	size_t SampleCount() const {
 		return m_samples.size();

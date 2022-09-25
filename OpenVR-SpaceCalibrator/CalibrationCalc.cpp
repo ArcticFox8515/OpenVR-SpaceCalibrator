@@ -517,7 +517,7 @@ void CalibrationCalc::ComputeInstantOffset() {
 	Metrics::posOffset_lastSample.Push(hmdSpace * 1000);
 }
 
-bool CalibrationCalc::ComputeIncremental(bool &lerp) {
+bool CalibrationCalc::ComputeIncremental(bool &lerp, double threshold) {
 	Metrics::RecordTimestamp();
 
 	auto calibration = ComputeCalibration();
@@ -559,12 +559,7 @@ bool CalibrationCalc::ComputeIncremental(bool &lerp) {
 	
 	bool ok = valid;
 	
-	static int stableCt;
-
-	if (ok) stableCt++;
-	else stableCt = 0;
-	
-	bool oldCalibrationBetter = !valid || (m_isValid && priorCalibrationError < newError * 1.5); // +0.00025 + 0.005 / stableCt;
+	bool oldCalibrationBetter = !valid || (m_isValid && priorCalibrationError < newError * threshold);
 
 #if 0
 		char tmp[256];
@@ -592,7 +587,7 @@ bool CalibrationCalc::ComputeIncremental(bool &lerp) {
 	else {
 		relPoseValid = false;
 	}
-	if (!ok && relPoseValid && relPoseError * 1.5 < existingPoseErrorUsingRelPosition) {
+	if (!ok && relPoseValid && relPoseError * threshold < existingPoseErrorUsingRelPosition) {
 		usingRelPose = true;
 		newError = relPoseError;
 		calibration = byRelPose;

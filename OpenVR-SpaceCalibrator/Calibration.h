@@ -45,6 +45,8 @@ struct CalibrationContext
 	double timeLastTick = 0, timeLastScan = 0;
 	double wantedUpdateInterval = 1.0;
 
+	float continuousCalibrationThreshold;
+
 	protocol::AlignmentSpeedParams alignmentSpeedParams;
 	bool enableStaticRecalibration;
 
@@ -76,6 +78,8 @@ struct CalibrationContext
 		alignmentSpeedParams.align_speed_tiny = 1.0f;
 		alignmentSpeedParams.align_speed_small = 1.0f;
 		alignmentSpeedParams.align_speed_large = 2.0f;
+
+		continuousCalibrationThreshold = 1.5f;
 
 		enableStaticRecalibration = true;
 	}

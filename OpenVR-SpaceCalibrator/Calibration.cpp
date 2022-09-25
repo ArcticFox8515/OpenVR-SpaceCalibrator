@@ -330,6 +330,7 @@ void StartCalibration()
 }
 
 void StartContinuousCalibration() {
+	CalCtx.calibrationSpeed = CalibrationContext::FAST;
 	StartCalibration();
 	CalCtx.state = CalibrationState::Continuous;
 	CalCtx.Log("Collecting initial samples...");
@@ -423,6 +424,8 @@ void CalibrationTick(double time)
 		snprintf(buf, sizeof buf, "Target device ID: %d, serial %s\n", ctx.targetID, targetSerial);
 		CalCtx.Log(buf);
 
+		ScanAndApplyProfile(ctx);
+
 		if (!CalCtx.ReferencePoseIsValid())
 		{
 			CalCtx.Log("Reference device is not tracking\n"); ok = false;
@@ -472,7 +475,7 @@ void CalibrationTick(double time)
 		if (CalCtx.state == CalibrationState::Continuous) {
 			CalCtx.messages.clear();
 			calibration.enableStaticRecalibration = CalCtx.enableStaticRecalibration;
-			ok = calibration.ComputeIncremental(lerp);
+			ok = calibration.ComputeIncremental(lerp, CalCtx.continuousCalibrationThreshold);
 		}
 		else {
 			calibration.enableStaticRecalibration = false;

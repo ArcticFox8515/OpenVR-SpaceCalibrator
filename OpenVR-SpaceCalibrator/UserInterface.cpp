@@ -134,16 +134,32 @@ void BuildContinuousCalDisplay() {
 	ImGui::End();
 }
 
-static void ScaledDragFloat(const char* label, double& f, double scale, double min, double max) {
+static void ScaledDragFloat(const char* label, double& f, double scale, double min, double max, int flags = ImGuiSliderFlags_AlwaysClamp) {
 	float v = (float) (f * scale);
 	
-	ImGui::DragFloat(label, &v, (float)0.01f, (float)min, (float)max);
+	ImGui::SliderFloat(label, &v, (float)min, (float)max, "%1.2f", flags);
 	
 	f = v / scale;
 }
 
 void CCal_AlignParams() {
-	ImGui::Text("Speed thresholds");
+	if (ImGui::Button("Reset settings")) {
+		CalCtx.ResetConfig();
+	}
+
+	ImGui::SliderFloat("Recalibration threshold", &CalCtx.continuousCalibrationThreshold, 1.01f, 10.0f, "%1.1f", 0);
+	if (ImGui::IsItemHovered(0)) {
+		ImGui::SetTooltip("Controls how confident SpaceCalibrator must be in the new calibration before updating the calibration.\n"
+			"Higher values calibrate less frequently, and may be useful on systems with lots of tracker drift."
+		);
+	}
+
+	ImGui::Separator();
+	ImGui::TextWrapped(
+		"Calibration speeds: SpaceCalibrator uses up to three different speeds at which it drags the calibration back into "
+		"position when drift occurs. These settings control how far off the calibration should be before going back to low speed (for "
+		"Decel) or going to higher speeds (for Slow and Fast)."
+	);
 	if (ImGui::BeginTable("SpeedThresholds", 3, 0)) {
 		ImGui::TableNextRow();
 		ImGui::TableSetColumnIndex(1);
@@ -183,10 +199,11 @@ void CCal_AlignParams() {
 		ImGui::EndTable();
 	}
 
-	ImGui::Text("Alignment rate");
-	ScaledDragFloat("Decel", CalCtx.alignmentSpeedParams.align_speed_tiny, 1.0, 0, 2.0);
-	ScaledDragFloat("Slow", CalCtx.alignmentSpeedParams.align_speed_small, 1.0, 0, 2.0);
-	ScaledDragFloat("Fast", CalCtx.alignmentSpeedParams.align_speed_large, 1.0, 0, 2.0);
+	ImGui::Separator();
+	ImGui::Text("Alignment speeds");
+	ScaledDragFloat("Decel", CalCtx.alignmentSpeedParams.align_speed_tiny, 1.0, 0, 2.0, 0);
+	ScaledDragFloat("Slow", CalCtx.alignmentSpeedParams.align_speed_small, 1.0, 0, 2.0, 0);
+	ScaledDragFloat("Fast", CalCtx.alignmentSpeedParams.align_speed_large, 1.0, 0, 2.0, 0);
 }
 
 void CCal_BasicInfo() {

@@ -282,8 +282,8 @@ void RunLoop()
 					break;
 				case vr::VREvent_ScrollDiscrete:
 				{
-					double x = vrEvent.data.scroll.xdelta * 360.0f * 8.0f;
-					double y = vrEvent.data.scroll.ydelta * 360.0f * 8.0f;
+					float x = vrEvent.data.scroll.xdelta * 360.0f * 8.0f;
+					float y = vrEvent.data.scroll.ydelta * 360.0f * 8.0f;
 					io.AddMouseWheelEvent(x, y);
 					break;
 				}
