@@ -9,3 +9,4 @@ ipch
 /x64/
 /lib/boost*
 /install/OpenVR-SpaceCalibrator.exe
+lib/Release/
