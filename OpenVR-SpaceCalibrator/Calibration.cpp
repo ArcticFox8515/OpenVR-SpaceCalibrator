@@ -363,6 +363,16 @@ void CalibrationTick(double time)
 		}
 	});
 
+	if (ctx.state == CalibrationState::None || ctx.state == CalibrationState::ContinuousStandby
+		|| (ctx.state == CalibrationState::Continuous && !calibration.isValid()))
+	{
+		if ((time - ctx.timeLastScan) >= 1.0)
+		{
+			ScanAndApplyProfile(ctx);
+			ctx.timeLastScan = time;
+		}
+	}
+
 	if (ctx.state == CalibrationState::ContinuousStandby) {
 		if (AssignTargets()) {
 			StartContinuousCalibration();
@@ -374,15 +384,8 @@ void CalibrationTick(double time)
 		}
 	}
 
-	if (ctx.state == CalibrationState::None)
-	{
+	if (ctx.state == CalibrationState::None) {
 		ctx.wantedUpdateInterval = 1.0;
-
-		if ((time - ctx.timeLastScan) >= 1.0)
-		{
-			ScanAndApplyProfile(ctx);
-			ctx.timeLastScan = time;
-		}
 		return;
 	}
 
