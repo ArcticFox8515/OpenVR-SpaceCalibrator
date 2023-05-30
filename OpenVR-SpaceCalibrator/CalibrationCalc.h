@@ -92,19 +92,19 @@ public:
 
 	// Debug fields
 	Eigen::Vector3d m_posOffset;
-	double m_newCalRMS, m_oldCalRMS, m_axisVariance;
+	double m_axisVariance = 0.0;
 	long m_calcCycle;
 
 private:
 	bool m_isValid;
 	Eigen::AffineCompact3d m_estimatedTransformation;
+	bool m_relativePosCalibrated = false;
 
 	/*
 	 * This affine transform estimates the pose of the target within the reference device's local pose space.
 	 * That is to say, it's given by transforming the target world pose by the inverse reference pose.
 	 */
-	Eigen::AffineCompact3d m_refToTargetPose;
-	bool m_refToTargetPoseValid;
+	Eigen::AffineCompact3d m_refToTargetPose = Eigen::AffineCompact3d::Identity();
 
 	std::deque<Sample> m_samples;
 

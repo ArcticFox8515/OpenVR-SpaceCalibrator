@@ -116,6 +116,9 @@ void CalibrationCalc::Clear() {
 	m_estimatedTransformation.setIdentity();
 	m_isValid = false;
 	m_samples.clear();
+	m_axisVariance = 0.0;
+	m_refToTargetPose = Eigen::AffineCompact3d::Identity();
+	m_relativePosCalibrated = false;
 }
 
 Eigen::Vector3d CalibrationCalc::CalibrateRotation() const {
@@ -477,8 +480,6 @@ Eigen::AffineCompact3d CalibrationCalc::EstimateRefToTargetPose(const Eigen::Aff
  */
 bool CalibrationCalc::CalibrateByRelPose(Eigen::AffineCompact3d &out) const {
 	// R * S * T^-1 = C
-	if (!m_refToTargetPoseValid) return false;
-
 	out = PoseAverager::AverageFor(m_samples, [&](const auto& sample) {
 		return Eigen::AffineCompact3d(sample.ref.ToAffine() * m_refToTargetPose * sample.target.ToAffine().inverse());
 	});
@@ -518,48 +519,73 @@ void CalibrationCalc::ComputeInstantOffset() {
 }
 
 bool CalibrationCalc::ComputeIncremental(bool &lerp, double threshold) {
+
+
 	Metrics::RecordTimestamp();
 
-	auto calibration = ComputeCalibration();
-
-	bool usingRelPose = false;
-	bool valid = true;
-	auto variance = ComputeAxisVariance(calibration);
-	//std::ostringstream oss;
-	//oss << "Axis variance: " << variance(0) << " " << variance(1) << " " << variance(2) << " " << variance(3) << "\n";
-	//CalCtx.Log(oss.str());
-	//oss.clear();
-	m_axisVariance = variance(1);
-
-	if (m_axisVariance < AxisVarianceThreshold) {
-		//CalCtx.Log("Calibration points are nearly coplanar. Try moving around more?\n");
-		valid = false;
-	}
-	Metrics::axisIndependence.Push(m_axisVariance);
-
-	double newError = INFINITY, priorCalibrationError = INFINITY;
-	if (valid) {
-		valid = ValidateCalibration(calibration, &newError, &m_posOffset);
-		m_newCalRMS = newError;
-		Metrics::posOffset_rawComputed.Push(m_posOffset * 1000);
-	}
-
-	Metrics::error_rawComputed.Push(newError * 1000);
-	
-	// Use stricter thresholds for continuous calibration to limit jitter
-	valid = valid && newError < 0.005;
-
+	double priorCalibrationError = INFINITY;
 	Eigen::Vector3d priorPosOffset;
-	ValidateCalibration(m_estimatedTransformation, &priorCalibrationError, &priorPosOffset);
-	m_oldCalRMS = priorCalibrationError;
-	Metrics::posOffset_currentCal.Push(priorPosOffset * 1000);
-	Metrics::error_currentCal.Push(priorCalibrationError * 1000);
+    if (m_isValid) {
+        ValidateCalibration(m_estimatedTransformation, &priorCalibrationError, &priorPosOffset);
+		
+        Metrics::posOffset_currentCal.Push(priorPosOffset * 1000);
+        Metrics::error_currentCal.Push(priorCalibrationError * 1000);
+        if (priorCalibrationError < 0.005) {
+            return false;
+        }
+    }
+	double newError = INFINITY;
+	bool newCalibrationValid = false;
+    Eigen::AffineCompact3d byRelPose;
+    Eigen::AffineCompact3d calibration;
+	bool usingRelPose = false;
+    double relPoseError = INFINITY;
 
-	ComputeInstantOffset();
+    if (enableStaticRecalibration && CalibrateByRelPose(byRelPose)) {
+		Eigen::Vector3d relPosOffset;
+		ValidateCalibration(byRelPose, &relPoseError, &relPosOffset);
+        Metrics::posOffset_byRelPose.Push(relPosOffset * 1000);
+        Metrics::error_byRelPose.Push(relPoseError * 1000);
+
+		if (relPoseError < 0.010 || m_relativePosCalibrated && relPoseError < 0.025) {
+			newCalibrationValid = true;
+			usingRelPose = true;
+			newError = relPoseError;
+			calibration = byRelPose;
+			if (relPoseError * threshold >= priorCalibrationError) {
+				return false;
+			}
+		}
+	}
+
+	double newVariance = 0;
+    if (!newCalibrationValid) {
+        calibration = ComputeCalibration();
+
+        newVariance = ComputeAxisVariance(calibration)(1);
+		Metrics::axisIndependence.Push(newVariance);
+
+        if (newVariance < AxisVarianceThreshold && newVariance < m_axisVariance) {
+            newCalibrationValid = false;
+        } else {
+            newCalibrationValid = ValidateCalibration(calibration, &newError, &m_posOffset);
+            Metrics::posOffset_rawComputed.Push(m_posOffset * 1000);
+        }
+
+        if (m_isValid) {
+            if (priorCalibrationError < newError * threshold) {
+                // If we have a more noisy calibration than before, avoid updating.
+                newCalibrationValid = false;
+            }
+        }
+
+        Metrics::error_rawComputed.Push(newError * 1000);
+		
+		ComputeInstantOffset();
+    }
+
+
 	
-	bool ok = valid;
-	
-	bool oldCalibrationBetter = !valid || (m_isValid && priorCalibrationError < newError * threshold);
 
 #if 0
 		char tmp[256];
@@ -568,47 +594,38 @@ bool CalibrationCalc::ComputeIncremental(bool &lerp, double threshold) {
 		CalCtx.Log(tmp);
 #endif
 		
-	// If we have a more noisy calibration than before, avoid updating.
-	if (oldCalibrationBetter) ok = false;
 	
 	// Now, can we use the relative pose to perform a rapid correction?
-	Eigen::AffineCompact3d byRelPose;
-	bool relPoseAvailable = CalibrateByRelPose(byRelPose);
-	double relPoseError = INFINITY, existingPoseErrorUsingRelPosition = 0;
-	Eigen::Vector3d relPosOffset;
-	bool relPoseValid;
-	if (relPoseAvailable && enableStaticRecalibration) {
-		relPoseValid = ValidateCalibration(byRelPose, &relPoseError, &relPosOffset);
-		Metrics::posOffset_byRelPose.Push(relPosOffset * 1000);
-		Metrics::error_byRelPose.Push(relPoseError * 1000);
-		existingPoseErrorUsingRelPosition = RetargetingErrorRMS(m_refToTargetPose.translation(), m_estimatedTransformation);
-		Metrics::error_currentCalRelPose.Push(existingPoseErrorUsingRelPosition * 1000);
-	}
-	else {
-		relPoseValid = false;
-	}
-	if (!ok && relPoseValid && relPoseError * threshold < existingPoseErrorUsingRelPosition) {
-		usingRelPose = true;
-		newError = relPoseError;
-		calibration = byRelPose;
-		ok = true;
-	}
+    if (!newCalibrationValid) {
+		
+        double existingPoseErrorUsingRelPosition = RetargetingErrorRMS(m_refToTargetPose.translation(), m_estimatedTransformation);
+        Metrics::error_currentCalRelPose.Push(existingPoseErrorUsingRelPosition * 1000);
+		if (relPoseError * threshold < existingPoseErrorUsingRelPosition || newCalibrationValid && relPoseError < newError) {
+		newCalibrationValid = true;
+        usingRelPose = true;
+        newError = relPoseError;
+        calibration = byRelPose;
+		}
+    }
 
-	if (ok) {
+	if (newCalibrationValid) {
 		lerp = m_isValid;
+		m_relativePosCalibrated = m_relativePosCalibrated || newError < 0.005;
 		if (!m_isValid) {
 			CalCtx.Log("Applying initial transformation...");
 		}
-		else {
+		else if (m_relativePosCalibrated) {
 			CalCtx.Log("Applying updated transformation...");
+		} else {
+			CalCtx.Log("Applying temporary transformation...");
 		}
 		
 		m_isValid = true;
 		m_estimatedTransformation = calibration;
+		m_axisVariance = newVariance;
 
 		if (!usingRelPose) {
 			m_refToTargetPose = EstimateRefToTargetPose(m_estimatedTransformation);
-			m_refToTargetPoseValid = true;
 		}
 
 		Metrics::calibrationApplied.Push(!usingRelPose);
