@@ -547,7 +547,7 @@ bool CalibrationCalc::ComputeIncremental(bool &lerp, double threshold) {
         Metrics::posOffset_byRelPose.Push(relPosOffset * 1000);
         Metrics::error_byRelPose.Push(relPoseError * 1000);
 
-		if (relPoseError < 0.010 || m_relativePosCalibrated && relPoseError < 0.025) {
+		if (relPoseError < 0.015 || m_relativePosCalibrated && relPoseError < 0.035) {
 			newCalibrationValid = true;
 			usingRelPose = true;
 			newError = relPoseError;

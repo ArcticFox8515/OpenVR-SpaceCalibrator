@@ -73,6 +73,22 @@ public:
 	bool isValid() const {
 		return m_isValid;
 	}
+	
+	const Eigen::AffineCompact3d RelativeTransformation() const 
+	{
+		return m_refToTargetPose;
+	}
+
+	bool isRelativeTransformationCalibrated() const
+	{
+		return m_relativePosCalibrated;
+	}
+
+	void setRelativeTransformation(const Eigen::AffineCompact3d transform, bool calibrated)
+	{
+		m_refToTargetPose = transform;
+		m_relativePosCalibrated = calibrated;
+	}
 
 	void PushSample(const Sample& sample);
 	void Clear();

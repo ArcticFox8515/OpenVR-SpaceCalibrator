@@ -151,6 +151,31 @@ static void ParseProfile(CalibrationContext &ctx, std::istream &stream)
 			ctx.chaperone.valid = true;
 		}
 	}
+	if (obj["relative_pos_calibrated"].is<bool>()) {
+		ctx.relativePosCalibrated = obj["relative_pos_calibrated"].get<bool>();
+	}
+	if (obj["relative_transform"].is<picojson::object>()) {
+		auto relTransform = obj["relative_transform"].get<picojson::object>();
+		Eigen::Vector3d refToTragetRoation;
+		Eigen::Vector3d refToTargetTranslation;
+
+		refToTragetRoation(0) = relTransform["roll"].get<double>();
+		refToTragetRoation(1) = relTransform["yaw"].get<double>();
+		refToTragetRoation(2) = relTransform["pitch"].get<double>();
+		refToTargetTranslation(0) = relTransform["x"].get<double>();
+		refToTargetTranslation(1) = relTransform["y"].get<double>();
+		refToTargetTranslation(2) = relTransform["z"].get<double>();
+
+        Eigen::Matrix3d rotationMatrix;
+        rotationMatrix =
+            Eigen::AngleAxisd(refToTragetRoation[0], Eigen::Vector3d::UnitX()) *
+            Eigen::AngleAxisd(refToTragetRoation[1], Eigen::Vector3d::UnitY()) *
+            Eigen::AngleAxisd(refToTragetRoation[2], Eigen::Vector3d::UnitZ());
+
+		ctx.refToTargetPose = Eigen::AffineCompact3d::Identity();
+        ctx.refToTargetPose.linear() = rotationMatrix;
+        ctx.refToTargetPose.translation() = refToTargetTranslation;
+	}
 
 	ctx.validProfile = true;
 }
@@ -211,6 +236,18 @@ static void WriteProfile(CalibrationContext &ctx, std::ostream &out)
 
 		profile["chaperone"].set<picojson::object>(chaperone);
 	}
+
+	Eigen::Vector3d refToTragetRoation = ctx.refToTargetPose.rotation().eulerAngles(0, 1, 2);
+	Eigen::Vector3d refToTargetTranslation = ctx.refToTargetPose.translation();
+	picojson::object refToTarget;
+	refToTarget["x"].set<double>(refToTargetTranslation(0));
+	refToTarget["y"].set<double>(refToTargetTranslation(1));
+	refToTarget["z"].set<double>(refToTargetTranslation(2));
+	refToTarget["roll"].set<double>(refToTragetRoation(0));
+	refToTarget["yaw"].set<double>(refToTragetRoation(1));
+	refToTarget["pitch"].set<double>(refToTragetRoation(2));
+	profile["relative_pos_calibrated"].set<bool>(ctx.relativePosCalibrated);
+	profile["relative_transform"].set<picojson::object>(refToTarget);
 
 	picojson::value profileV;
 	profileV.set<picojson::object>(profile);

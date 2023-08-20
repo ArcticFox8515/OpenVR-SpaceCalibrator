@@ -1,6 +1,7 @@
 #pragma once
 
 #include <Eigen/Core>
+#include <Eigen/Geometry>
 #include <Windows.h>
 #include <openvr.h>
 #include <vector>
@@ -49,6 +50,9 @@ struct CalibrationContext
 
 	protocol::AlignmentSpeedParams alignmentSpeedParams;
 	bool enableStaticRecalibration;
+
+	Eigen::AffineCompact3d refToTargetPose = Eigen::AffineCompact3d::Identity();
+	bool relativePosCalibrated = false;
 
 	enum Speed
 	{
@@ -111,6 +115,8 @@ struct CalibrationContext
 		targetTrackingSystem = "";
 		enabled = false;
 		validProfile = false;
+		refToTargetPose = Eigen::AffineCompact3d::Identity();
+		relativePosCalibrated = true;
 	}
 
 	size_t SampleCount()

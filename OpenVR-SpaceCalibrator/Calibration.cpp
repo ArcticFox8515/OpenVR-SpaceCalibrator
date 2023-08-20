@@ -330,15 +330,17 @@ void StartCalibration()
 }
 
 void StartContinuousCalibration() {
-	CalCtx.calibrationSpeed = CalibrationContext::FAST;
+	CalCtx.calibrationSpeed = CalibrationContext::SLOW;
 	StartCalibration();
 	CalCtx.state = CalibrationState::Continuous;
+	calibration.setRelativeTransformation(CalCtx.refToTargetPose, CalCtx.relativePosCalibrated);
 	CalCtx.Log("Collecting initial samples...");
 	Metrics::WriteLogAnnotation("StartContinuousCalibration");
 }
 
 void EndContinuousCalibration() {
 	CalCtx.state = CalibrationState::None;
+	CalCtx.relativePosCalibrated = false;
 	SaveProfile(CalCtx);
 	Metrics::WriteLogAnnotation("EndContinuousCalibration");
 }
@@ -488,6 +490,8 @@ void CalibrationTick(double time)
 		if (calibration.isValid()) {
 			ctx.calibratedRotation = calibration.EulerRotation();
 			ctx.calibratedTranslation = calibration.Transformation().translation() * 100.0; // convert to cm units for profile storage
+			ctx.refToTargetPose = calibration.RelativeTransformation();
+			ctx.relativePosCalibrated = calibration.isRelativeTransformationCalibrated();
 
 			auto vrTrans = VRTranslationVec(ctx.calibratedTranslation);
 			auto vrRot = VRRotationQuat(Eigen::Quaterniond(calibration.Transformation().rotation()));
@@ -518,7 +522,7 @@ void CalibrationTick(double time)
 			calibration.Clear();
 		}
 		else {
-			for (int i = 0; i < 10; i++) calibration.ShiftSample();
+			for (int i = 0; i < 50; i++) calibration.ShiftSample();
 		}
 	}
 }
