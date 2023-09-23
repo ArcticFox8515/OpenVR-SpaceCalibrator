@@ -139,42 +139,43 @@ Eigen::Vector3d CalibrationCalc::CalibrateRotation() const {
 
 	// Kabsch algorithm
 
-	Eigen::MatrixXd refPoints(deltas.size(), 3), targetPoints(deltas.size(), 3);
-	Eigen::Vector3d refCentroid(0, 0, 0), targetCentroid(0, 0, 0);
+    // Initialize 2D points and centroids
+    Eigen::MatrixXd refPoints(deltas.size(), 2), targetPoints(deltas.size(), 2);
+    Eigen::Vector2d refCentroid(0, 0), targetCentroid(0, 0);
 
-	for (size_t i = 0; i < deltas.size(); i++)
-	{
-		refPoints.row(i) = deltas[i].ref;
-		refCentroid += deltas[i].ref;
+    // Fill matrices and calculate centroids
+    for (size_t i = 0; i < deltas.size(); i++) {
+        refPoints.row(i) << deltas[i].ref[0], deltas[i].ref[2];  // Take only the x and z components
+        refCentroid += refPoints.row(i);
 
-		targetPoints.row(i) = deltas[i].target;
-		targetCentroid += deltas[i].target;
-	}
+        targetPoints.row(i) << deltas[i].target[0], deltas[i].target[2];  // Take only the x and z components
+        targetCentroid += targetPoints.row(i);
+    }
 
-	refCentroid /= (double)deltas.size();
-	targetCentroid /= (double)deltas.size();
+    refCentroid /= (double)deltas.size();
+    targetCentroid /= (double)deltas.size();
 
-	for (size_t i = 0; i < deltas.size(); i++)
-	{
-		refPoints.row(i) -= refCentroid;
-		targetPoints.row(i) -= targetCentroid;
-	}
+    // Center the points
+    for (size_t i = 0; i < deltas.size(); i++) {
+        refPoints.row(i) -= refCentroid;
+        targetPoints.row(i) -= targetCentroid;
+    }
 
-	auto crossCV = refPoints.transpose() * targetPoints;
+    // Calculate cross-covariance matrix
+    auto crossCV = refPoints.transpose() * targetPoints;
 
-	Eigen::BDCSVD<Eigen::MatrixXd> bdcsvd;
-	auto svd = bdcsvd.compute(crossCV, Eigen::ComputeThinU | Eigen::ComputeThinV);
+    // Singular Value Decomposition (SVD)
+    Eigen::JacobiSVD<Eigen::MatrixXd> svd(crossCV, Eigen::ComputeThinU | Eigen::ComputeThinV);
 
-	Eigen::Matrix3d i = Eigen::Matrix3d::Identity();
-	if ((svd.matrixU() * svd.matrixV().transpose()).determinant() < 0)
-	{
-		i(2, 2) = -1;
-	}
+    // Calculate 2D rotation matrix
+    Eigen::Matrix2d i = Eigen::Matrix2d::Identity();
+    Eigen::Matrix2d rot = svd.matrixV() * i * svd.matrixU().transpose();
 
-	Eigen::Matrix3d rot = svd.matrixV() * i * svd.matrixU().transpose();
-	rot.transposeInPlace();
+    // Calculate yaw angle in radians
+    double yaw = std::atan2(rot(1, 0), rot(0, 0));
 
-	Eigen::Vector3d euler = rot.eulerAngles(2, 1, 0) * 180.0 / EIGEN_PI;
+    // Convert to degrees
+	Eigen::Vector3d euler(0.0, yaw * 180.0 / EIGEN_PI, 0.0);
 
 	//snprintf(buf, sizeof buf, "Calibrated rotation: yaw=%.2f pitch=%.2f roll=%.2f\n", euler[1], euler[2], euler[0]);
 	//CalCtx.Log(buf);
@@ -546,8 +547,8 @@ bool CalibrationCalc::ComputeIncremental(bool &lerp, double threshold) {
 		ValidateCalibration(byRelPose, &relPoseError, &relPosOffset);
         Metrics::posOffset_byRelPose.Push(relPosOffset * 1000);
         Metrics::error_byRelPose.Push(relPoseError * 1000);
-
-		if (relPoseError < 0.015 || m_relativePosCalibrated && relPoseError < 0.035) {
+		
+		if (relPoseError < 0.010 || m_relativePosCalibrated && relPoseError < 0.025) {
 			newCalibrationValid = true;
 			usingRelPose = true;
 			newError = relPoseError;
