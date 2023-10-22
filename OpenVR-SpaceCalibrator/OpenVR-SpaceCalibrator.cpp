@@ -224,6 +224,7 @@ void RunLoop()
 		bool dashboardVisible = false;
 		int width, height;
 		glfwGetFramebufferSize(glfwWindow, &width, &height);
+		const bool windowVisible = (width > 0 && height > 0);
 
 		if (overlayMainHandle && vr::VROverlay())
 		{
@@ -306,59 +307,62 @@ void RunLoop()
 				}
 			}
 		}
-
-		auto &io = ImGui::GetIO();
-		io.DisplaySize = ImVec2((float) fboTextureWidth, (float) fboTextureHeight);
-		io.DisplayFramebufferScale = ImVec2(1.0f, 1.0f);
-
-		io.ConfigFlags = io.ConfigFlags & ~ImGuiConfigFlags_NoMouseCursorChange;
-		if (dashboardVisible) {
-			io.ConfigFlags = io.ConfigFlags | ImGuiConfigFlags_NoMouseCursorChange;
-		}
-		ImGui_ImplOpenGL3_NewFrame();
-		ImGui_ImplGlfw_NewFrame();
-		ImGui::NewFrame();
-
-		BuildMainWindow(dashboardVisible);
-
-		ImGui::Render();
-
-		glBindFramebuffer(GL_FRAMEBUFFER, fboHandle);
-		glViewport(0, 0, fboTextureWidth, fboTextureHeight);
-		glClearColor(0, 0, 0, 1);
-		glClear(GL_COLOR_BUFFER_BIT);
-
-		ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
-
-		glBindFramebuffer(GL_FRAMEBUFFER, 0);
-
-		if (width && height)
+		
+		if (windowVisible || dashboardVisible)
 		{
-			glBindFramebuffer(GL_READ_FRAMEBUFFER, fboHandle);
-			glBlitFramebuffer(0, 0, width, height, 0, 0, width, height, GL_COLOR_BUFFER_BIT, GL_NEAREST);
-			glfwSwapBuffers(glfwWindow);
-		}
+			auto &io = ImGui::GetIO();
+			io.DisplaySize = ImVec2((float) fboTextureWidth, (float) fboTextureHeight);
+			io.DisplayFramebufferScale = ImVec2(1.0f, 1.0f);
 
-		if (dashboardVisible)
-		{
-			vr::Texture_t vrTex;
-			vrTex.eType = vr::TextureType_OpenGL;
-			vrTex.eColorSpace = vr::ColorSpace_Auto;
+			io.ConfigFlags = io.ConfigFlags & ~ImGuiConfigFlags_NoMouseCursorChange;
+			if (dashboardVisible) {
+				io.ConfigFlags = io.ConfigFlags | ImGuiConfigFlags_NoMouseCursorChange;
+			}
+			ImGui_ImplOpenGL3_NewFrame();
+			ImGui_ImplGlfw_NewFrame();
+			ImGui::NewFrame();
 
-			vrTex.handle = (void *)
+			BuildMainWindow(dashboardVisible);
+
+			ImGui::Render();
+
+			glBindFramebuffer(GL_FRAMEBUFFER, fboHandle);
+			glViewport(0, 0, fboTextureWidth, fboTextureHeight);
+			glClearColor(0, 0, 0, 1);
+			glClear(GL_COLOR_BUFFER_BIT);
+
+			ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
+
+			glBindFramebuffer(GL_FRAMEBUFFER, 0);
+
+			if (width && height)
+			{
+				glBindFramebuffer(GL_READ_FRAMEBUFFER, fboHandle);
+				glBlitFramebuffer(0, 0, width, height, 0, 0, width, height, GL_COLOR_BUFFER_BIT, GL_NEAREST);
+				glfwSwapBuffers(glfwWindow);
+			}
+
+			if (dashboardVisible)
+			{
+				vr::Texture_t vrTex;
+				vrTex.eType = vr::TextureType_OpenGL;
+				vrTex.eColorSpace = vr::ColorSpace_Auto;
+
+				vrTex.handle = (void *)
 #if defined _WIN64 || defined _LP64
-			(uint64_t)
+				(uint64_t)
 #endif
-				fboTextureHandle;
+					fboTextureHandle;
 
-			vr::HmdVector2_t mouseScale = { (float) fboTextureWidth, (float) fboTextureHeight };
+				vr::HmdVector2_t mouseScale = { (float) fboTextureWidth, (float) fboTextureHeight };
 
-			vr::VROverlay()->SetOverlayTexture(overlayMainHandle, &vrTex);
-			vr::VROverlay()->SetOverlayMouseScale(overlayMainHandle, &mouseScale);
+				vr::VROverlay()->SetOverlayTexture(overlayMainHandle, &vrTex);
+				vr::VROverlay()->SetOverlayMouseScale(overlayMainHandle, &mouseScale);
+			}
 		}
 
 		const double dashboardInterval = 1.0 / 90.0; // fps
-		double waitEventsTimeout = CalCtx.wantedUpdateInterval;
+		double waitEventsTimeout = max(CalCtx.wantedUpdateInterval, dashboardInterval);
 
 		if (dashboardVisible && waitEventsTimeout > dashboardInterval)
 			waitEventsTimeout = dashboardInterval;

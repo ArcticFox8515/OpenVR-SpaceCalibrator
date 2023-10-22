@@ -376,8 +376,4 @@ void ShowCalibrationDebug(int rows, int cols) {
 	if (!wasHovered) {
 		lastMouseX = -INFINITY;
 	}
-
-	if (lastMouseX != initMouseX) {
-		RequestImmediateRedraw();
-	}
 }
