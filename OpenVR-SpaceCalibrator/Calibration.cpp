@@ -330,7 +330,7 @@ void StartCalibration()
 }
 
 void StartContinuousCalibration() {
-	CalCtx.calibrationSpeed = CalibrationContext::SLOW;
+	CalCtx.calibrationSpeed = CalibrationContext::FAST;
 	StartCalibration();
 	CalCtx.state = CalibrationState::Continuous;
 	calibration.setRelativeTransformation(CalCtx.refToTargetPose, CalCtx.relativePosCalibrated);
@@ -522,7 +522,7 @@ void CalibrationTick(double time)
 			calibration.Clear();
 		}
 		else {
-			for (int i = 0; i < 50; i++) calibration.ShiftSample();
+			for (int i = 0; i < 10; i++) calibration.ShiftSample();
 		}
 	}
 }
