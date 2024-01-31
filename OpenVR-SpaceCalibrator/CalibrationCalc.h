@@ -59,6 +59,7 @@ public:
 	static const double AxisVarianceThreshold;
 
 	bool enableStaticRecalibration;
+	bool lockRelativePosition = false;
 	
 	const Eigen::AffineCompact3d Transformation() const 
 	{

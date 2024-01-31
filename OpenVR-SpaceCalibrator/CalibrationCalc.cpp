@@ -524,6 +524,20 @@ bool CalibrationCalc::ComputeIncremental(bool &lerp, double threshold) {
 
 	Metrics::RecordTimestamp();
 
+	if (lockRelativePosition) {
+		Eigen::AffineCompact3d byRelPose;
+		double relPoseError = INFINITY;
+		Eigen::Vector3d relPosOffset;
+		CalibrateByRelPose(byRelPose);
+		ValidateCalibration(byRelPose, &relPoseError, &relPosOffset);
+		Metrics::posOffset_byRelPose.Push(relPosOffset * 1000);
+		Metrics::error_byRelPose.Push(relPoseError * 1000);
+
+		m_isValid = true;
+		m_estimatedTransformation = byRelPose;
+		return true;
+	}
+
 	double priorCalibrationError = INFINITY;
 	Eigen::Vector3d priorPosOffset;
     if (m_isValid) {
@@ -531,6 +545,7 @@ bool CalibrationCalc::ComputeIncremental(bool &lerp, double threshold) {
 		
         Metrics::posOffset_currentCal.Push(priorPosOffset * 1000);
         Metrics::error_currentCal.Push(priorCalibrationError * 1000);
+
         if (priorCalibrationError < 0.005) {
             return false;
         }
