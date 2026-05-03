@@ -51,6 +51,7 @@ static void VisitAlignmentParams(CalibrationContext& ctx, std::function<void(con
 	P(align_speed_tiny);
 	P(align_speed_small);
 	P(align_speed_large);
+	P(align_time_constant);
 	P(thr_trans_tiny);
 	P(thr_trans_small);
 	P(thr_trans_large);

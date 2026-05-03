@@ -84,6 +84,8 @@ struct CalibrationContext
 		alignmentSpeedParams.align_speed_small = 1.0f;
 		alignmentSpeedParams.align_speed_large = 2.0f;
 
+		alignmentSpeedParams.align_time_constant = 0.25;
+
 		continuousCalibrationThreshold = 1.5f;
 
 		enableStaticRecalibration = true;

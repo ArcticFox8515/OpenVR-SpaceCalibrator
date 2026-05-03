@@ -183,8 +183,13 @@ namespace {
 				CalCtx.Log("Aborting calibration!\n");
 				CalCtx.state = CalibrationState::None;
 			}
-			else
+			else if (!ctx.lockRelativePosition)
 			{
+				// Normal continuous calibration restarts sample accumulation from
+				// scratch on a tracking dropout. In locked mode we must NOT clear:
+				// the window is our rollback history, and a slide commonly ends in
+				// a brief tracking loss - clearing would discard the last good
+				// sample exactly when we need it. Just skip pushing this frame.
 				calibration.ClearSamples();
 			}
 			return false;
@@ -233,6 +238,62 @@ void ResetAndDisableOffsets(uint32_t id)
 }
 
 static_assert(vr::k_unTrackedDeviceIndex_Hmd == 0, "HMD index expected to be 0");
+
+// Sends the current calibrated transform for a single device to the driver.
+// Shared by ScanAndApplyProfile (full scan) and ApplyContinuousTransform (fast
+// per-tick push) so the two cannot drift apart in how they configure a device.
+static void SendDeviceTransform(const CalibrationContext &ctx, uint32_t id)
+{
+	protocol::Request req(protocol::RequestSetDeviceTransform);
+	req.setDeviceTransform = {
+		id,
+		true,
+		VRTranslationVec(ctx.calibratedTranslation),
+		VRRotationQuat(ctx.calibratedRotation),
+		ctx.calibratedScale
+	};
+	req.setDeviceTransform.lerp = ctx.state == CalibrationState::Continuous;
+	req.setDeviceTransform.quash = ctx.state == CalibrationState::Continuous && (int32_t)id == ctx.targetID && ctx.quashTargetInContinuous;
+	// Locked continuous mode uses the responsive exponential blend; everything else keeps
+	// the legacy 3-speed banded blend.
+	req.setDeviceTransform.useExponential = ctx.state == CalibrationState::Continuous && ctx.lockRelativePosition;
+
+	Driver.SendBlocking(req);
+}
+
+// Lightweight per-tick transform push used by the locked continuous fast path.
+// Unlike ScanAndApplyProfile, this does NOT reset/disable devices, re-send
+// alignment params, or touch the chaperone. It only pushes the freshly computed
+// transform to the same set of target devices ScanAndApplyProfile would select
+// (devices on the target tracking system, excluding the HMD).
+static void ApplyContinuousTransform(CalibrationContext &ctx)
+{
+	if (!ctx.enabled)
+		return;
+
+	std::unique_ptr<char[]> buffer_array(new char[vr::k_unMaxPropertyStringSize]);
+	char* buffer = buffer_array.get();
+
+	for (uint32_t id = 0; id < vr::k_unMaxTrackedDeviceCount; ++id)
+	{
+		if (id == vr::k_unTrackedDeviceIndex_Hmd)
+			continue;
+
+		auto deviceClass = vr::VRSystem()->GetTrackedDeviceClass(id);
+		if (deviceClass == vr::TrackedDeviceClass_Invalid)
+			continue;
+
+		vr::ETrackedPropertyError err = vr::TrackedProp_Success;
+		vr::VRSystem()->GetStringTrackedDeviceProperty(id, vr::Prop_TrackingSystemName_String, buffer, vr::k_unMaxPropertyStringSize, &err);
+		if (err != vr::TrackedProp_Success)
+			continue;
+
+		if (std::string(buffer) != ctx.targetTrackingSystem)
+			continue;
+
+		SendDeviceTransform(ctx, id);
+	}
+}
 
 void ScanAndApplyProfile(CalibrationContext &ctx)
 {
@@ -298,18 +359,7 @@ void ScanAndApplyProfile(CalibrationContext &ctx)
 			continue;
 		}
 
-		protocol::Request req(protocol::RequestSetDeviceTransform);
-		req.setDeviceTransform = {
-			id,
-			true,
-			VRTranslationVec(ctx.calibratedTranslation),
-			VRRotationQuat(ctx.calibratedRotation),
-			ctx.calibratedScale
-		};
-		req.setDeviceTransform.lerp = CalCtx.state == CalibrationState::Continuous;
-		req.setDeviceTransform.quash = CalCtx.state == CalibrationState::Continuous && id == CalCtx.targetID && CalCtx.quashTargetInContinuous;
-
-		Driver.SendBlocking(req);
+		SendDeviceTransform(ctx, id);
 	}
 
 	if (ctx.enabled && ctx.chaperone.valid && ctx.chaperone.autoApply)
@@ -475,6 +525,40 @@ void CalibrationTick(double time)
 
 	if (!CollectSample(ctx))
 	{
+		return;
+	}
+
+	// Fast continuous path: relative transform locked. Adjust the tracker
+	// transform from the single latest sample every tick instead of collecting/
+	// averaging a full batch and running the heavy incremental calibration.
+	if (ctx.state == CalibrationState::Continuous && ctx.lockRelativePosition)
+	{
+		// Drive the main loop fast so we actually push transforms continuously.
+		// Without this, wantedUpdateInterval retains a large value (e.g. 1.0 from
+		// an earlier state) and glfwWaitEventsTimeout only wakes the loop every
+		// ~1s when the dashboard is hidden, making corrections arrive in bursts.
+		ctx.wantedUpdateInterval = 0.0;
+
+		calibration.lockRelativePosition = true;
+
+		// Trim to the default window size. The window doubles as rollback history
+		// for LastConfidentSampleIndex (when a drift slide is detected we roll back
+		// to the last good sample from before it began), so we keep the same depth
+		// as the normal calibration path rather than a smaller dedicated window.
+		while (calibration.SampleCount() > CalCtx.SampleCount()) calibration.ShiftSample();
+
+		if (calibration.ComputeLockedFromLatest())
+		{
+			ctx.calibratedRotation = calibration.EulerRotation();
+			ctx.calibratedTranslation = calibration.Transformation().translation() * 100.0; // cm units
+
+			// Ensure the device push isn't gated by stale enabled state. Normally
+			// ScanAndApplyProfile sets ctx.enabled, but once calibration.isValid()
+			// becomes true it stops being called, so set it here to match.
+			ctx.enabled = ctx.validProfile;
+
+			ApplyContinuousTransform(ctx);
+		}
 		return;
 	}
 
