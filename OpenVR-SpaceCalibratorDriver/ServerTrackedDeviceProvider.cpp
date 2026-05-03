@@ -25,6 +25,8 @@ vr::EVRInitError ServerTrackedDeviceProvider::Init(vr::IVRDriverContext *pDriver
 	alignmentSpeedParams.align_speed_small = 0.2f;
 	alignmentSpeedParams.align_speed_large = 2.0f;
 
+	alignmentSpeedParams.align_time_constant = 0.25;
+
 	InjectHooks(this, pDriverContext);
 	server.Run();
 	shmem.Create(OPENVR_SPACECALIBRATOR_SHMEM_NAME);
@@ -152,6 +154,37 @@ void ServerTrackedDeviceProvider::BlendTransform(DeviceTransform& device, const 
 	device.transform = device.transform.interpolateAround(lerp, device.targetTransform, deviceWorldPose.translation);
 }
 
+/**
+ * Smoothly interpolates the device active transform towards the target using a single
+ * exponential time constant, independent of error magnitude (like networked position
+ * smoothing): lerp = 1 - exp(-dt / tau). This replaces the legacy banded 3-speed blend
+ * for devices flagged with useExponential.
+ */
+void ServerTrackedDeviceProvider::BlendTransformExponential(DeviceTransform& device, const IsoTransform &deviceWorldPose) const {
+	LARGE_INTEGER timestamp, freq;
+	QueryPerformanceCounter(&timestamp);
+	QueryPerformanceFrequency(&freq);
+
+	double dt = (timestamp.QuadPart - device.lastPoll.QuadPart) / (double)freq.QuadPart;
+	device.lastPoll = timestamp;
+
+	const double tau = alignmentSpeedParams.align_time_constant;
+
+	double lerp;
+	if (tau <= 0.0 || dt < 0.0 || isnan(dt)) {
+		// Degenerate config/timing: snap to target.
+		lerp = 1.0;
+	} else {
+		lerp = 1.0 - exp(-dt / tau);
+	}
+	if (lerp > 1.0)
+		lerp = 1.0;
+	if (lerp < 0.0 || isnan(lerp))
+		lerp = 0.0;
+
+	device.transform = device.transform.interpolateAround(lerp, device.targetTransform, deviceWorldPose.translation);
+}
+
 void ServerTrackedDeviceProvider::ApplyTransform(DeviceTransform& device, vr::DriverPose_t& devicePose) const {
 	auto deviceWorldTransform = toIsoWorldTransform(devicePose);
 	deviceWorldTransform = device.transform * deviceWorldTransform;
@@ -202,6 +235,7 @@ void ServerTrackedDeviceProvider::SetDeviceTransform(const protocol::SetDeviceTr
 		tf.scale = newTransform.scale;
 
 	tf.quash = newTransform.quash;
+	tf.useExponential = newTransform.useExponential;
 }
 
 bool ServerTrackedDeviceProvider::HandleDevicePoseUpdated(uint32_t openVRID, vr::DriverPose_t &pose)
@@ -231,10 +265,15 @@ bool ServerTrackedDeviceProvider::HandleDevicePoseUpdated(uint32_t openVRID, vr:
 		pose.vecPosition[2] *= tf.scale;
 
 		auto deviceWorldPose = toIsoPose(pose);
-		tf.currentRate = GetTransformDeltaSize(tf.currentRate, deviceWorldPose, tf.transform, tf.targetTransform);
-		double lerp = GetTransformRate(tf.currentRate);
 
-		BlendTransform(tf, deviceWorldPose);
+		if (tf.useExponential) {
+			BlendTransformExponential(tf, deviceWorldPose);
+		} else {
+			tf.currentRate = GetTransformDeltaSize(tf.currentRate, deviceWorldPose, tf.transform, tf.targetTransform);
+			double lerp = GetTransformRate(tf.currentRate);
+
+			BlendTransform(tf, deviceWorldPose);
+		}
 		ApplyTransform(tf, pose);
 	}
 

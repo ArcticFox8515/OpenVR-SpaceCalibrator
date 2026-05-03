@@ -98,6 +98,13 @@ public:
 	bool ComputeOneshot();
 	bool ComputeIncremental(bool &lerp, double threshold);
 
+	// Fast continuous path: when the relative transform is locked and already
+	// calibrated, derive the playspace calibration from a single (the latest)
+	// sample instead of collecting and averaging a full batch. Returns false if
+	// preconditions aren't met (no samples / relative pose not yet established),
+	// in which case the caller should fall back to the regular logic.
+	bool ComputeLockedFromLatest();
+
 	size_t SampleCount() const {
 		return m_samples.size();
 	}
@@ -141,4 +148,19 @@ private:
 
 	Eigen::AffineCompact3d EstimateRefToTargetPose(const Eigen::AffineCompact3d& calibration) const;
 	bool CalibrateByRelPose(Eigen::AffineCompact3d &out) const;
+
+	// Returns the index into m_samples of the newest sample whose HMD-relative
+	// target position is trustworthy, or -1 if none is. Used by
+	// ComputeLockedFromLatest to roll back to the last good pose when the latest
+	// sample is corrupted by tracking instability (spikes / drift slides).
+	//
+	// Rule (operating on rel_k = target_k.trans - ref_k.trans, which cancels
+	// common-mode playspace translation):
+	//  - A one-tick jump |rel_k - rel_{k-1}| > kSpikeJump starts a "spike window".
+	//  - The following up to kSpikeHold samples are bad unless rel returns within
+	//    kReturnDist of the pre-spike value (tracker recovered -> samples good).
+	//  - If the displacement persists beyond kSpikeHold samples, it is accepted as
+	//    a new steady state (playspace reset / settled drift) and samples are good
+	//    again, anchored to the new baseline.
+	int LastConfidentSampleIndex() const;
 };

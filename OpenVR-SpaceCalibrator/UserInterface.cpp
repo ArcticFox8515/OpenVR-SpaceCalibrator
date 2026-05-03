@@ -204,6 +204,15 @@ void CCal_AlignParams() {
 	ScaledDragFloat("Decel", CalCtx.alignmentSpeedParams.align_speed_tiny, 1.0, 0, 2.0, 0);
 	ScaledDragFloat("Slow", CalCtx.alignmentSpeedParams.align_speed_small, 1.0, 0, 2.0, 0);
 	ScaledDragFloat("Fast", CalCtx.alignmentSpeedParams.align_speed_large, 1.0, 0, 2.0, 0);
+
+	ImGui::Separator();
+	ScaledDragFloat("Smoothing time constant (s)", CalCtx.alignmentSpeedParams.align_time_constant, 1.0, 0.01, 2.0, 0);
+	if (ImGui::IsItemHovered(0)) {
+		ImGui::SetTooltip("Exponential smoothing time constant used in locked continuous mode.\n"
+			"Lower values snap to the target faster; higher values are smoother.\n"
+			"Roughly, alignment completes within ~3x this value."
+		);
+	}
 }
 
 void CCal_BasicInfo() {

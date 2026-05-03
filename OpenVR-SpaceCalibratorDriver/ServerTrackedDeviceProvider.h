@@ -63,6 +63,7 @@ private:
 	{
 		bool enabled = false;
 		bool quash = false;
+		bool useExponential = false;
 		IsoTransform transform, targetTransform;
 		double scale;
 		LARGE_INTEGER lastPoll;
@@ -87,5 +88,6 @@ private:
 	double GetTransformRate(DeltaSize delta) const;
 
 	void BlendTransform(DeviceTransform& device, const IsoTransform& deviceWorldPose) const;
+	void BlendTransformExponential(DeviceTransform& device, const IsoTransform& deviceWorldPose) const;
 	void ApplyTransform(DeviceTransform& device, vr::DriverPose_t& devicePose) const;
 };

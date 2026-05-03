@@ -92,7 +92,7 @@ namespace vr {
 
 namespace protocol
 {
-	const uint32_t Version = 4;
+	const uint32_t Version = 5;
 
 	enum RequestType
 	{
@@ -136,6 +136,14 @@ namespace protocol
 		 * (We actually do a lerp(s * delta_t) where s is the speed factor here)
 		 */
 		double align_speed_tiny, align_speed_small, align_speed_large;
+
+		/**
+		 * Time constant (in seconds) for the exponential alignment path, used when a device
+		 * transform is sent with useExponential = true. The blend closes a constant fraction
+		 * of the remaining error per unit time: lerp = 1 - exp(-dt / align_time_constant).
+		 * Smaller values converge faster. Shared between translation and rotation.
+		 */
+		double align_time_constant;
 	};
 
 	struct SetDeviceTransform
@@ -151,23 +159,28 @@ namespace protocol
 		bool lerp;
 		bool quash;
 
+		// When true (and lerp is true), the driver blends toward the target using a single
+		// exponential time constant (align_time_constant) instead of the legacy 3-speed
+		// banded blend. Used by the locked continuous fast path.
+		bool useExponential;
+
 		SetDeviceTransform(uint32_t id, bool enabled) :
-			openVRID(id), enabled(enabled), updateTranslation(false), updateRotation(false), updateScale(false), lerp(false), quash(false) { }
+			openVRID(id), enabled(enabled), updateTranslation(false), updateRotation(false), updateScale(false), lerp(false), quash(false), useExponential(false) { }
 
 		SetDeviceTransform(uint32_t id, bool enabled, vr::HmdVector3d_t translation) :
-			openVRID(id), enabled(enabled), updateTranslation(true), updateRotation(false), updateScale(false), translation(translation), lerp(false), quash(false) { }
+			openVRID(id), enabled(enabled), updateTranslation(true), updateRotation(false), updateScale(false), translation(translation), lerp(false), quash(false), useExponential(false) { }
 
 		SetDeviceTransform(uint32_t id, bool enabled, vr::HmdQuaternion_t rotation) :
-			openVRID(id), enabled(enabled), updateTranslation(false), updateRotation(true), updateScale(false), rotation(rotation), lerp(false), quash(false) { }
+			openVRID(id), enabled(enabled), updateTranslation(false), updateRotation(true), updateScale(false), rotation(rotation), lerp(false), quash(false), useExponential(false) { }
 
 		SetDeviceTransform(uint32_t id, bool enabled, double scale) :
-			openVRID(id), enabled(enabled), updateTranslation(false), updateRotation(false), updateScale(true), scale(scale), lerp(false), quash(false) { }
+			openVRID(id), enabled(enabled), updateTranslation(false), updateRotation(false), updateScale(true), scale(scale), lerp(false), quash(false), useExponential(false) { }
 
 		SetDeviceTransform(uint32_t id, bool enabled, vr::HmdVector3d_t translation, vr::HmdQuaternion_t rotation) :
-			openVRID(id), enabled(enabled), updateTranslation(true), updateRotation(true), updateScale(false), translation(translation), rotation(rotation), lerp(false), quash(false) { }
+			openVRID(id), enabled(enabled), updateTranslation(true), updateRotation(true), updateScale(false), translation(translation), rotation(rotation), lerp(false), quash(false), useExponential(false) { }
 
 		SetDeviceTransform(uint32_t id, bool enabled, vr::HmdVector3d_t translation, vr::HmdQuaternion_t rotation, double scale) :
-			openVRID(id), enabled(enabled), updateTranslation(true), updateRotation(true), updateScale(true), translation(translation), rotation(rotation), scale(scale), lerp(false), quash(false) { }
+			openVRID(id), enabled(enabled), updateTranslation(true), updateRotation(true), updateScale(true), translation(translation), rotation(rotation), scale(scale), lerp(false), quash(false), useExponential(false) { }
 	};
 
 	struct Request

@@ -2,6 +2,7 @@
 #include "Calibration.h"
 #include "CalibrationMetrics.h"
 #include "..\Protocol.h"
+#include <algorithm>
 
 inline vr::HmdQuaternion_t operator*(const vr::HmdQuaternion_t& lhs, const vr::HmdQuaternion_t& rhs) {
 	return {
@@ -108,6 +109,16 @@ namespace {
 }
 
 const double CalibrationCalc::AxisVarianceThreshold = 0.001;
+
+// Confidence-classification constants for LastConfidentSampleIndex (locked mode).
+// Values derived from labeled drift telemetry: normal one-tick HMD-relative jump
+// p99 ~= 17mm, drift spikes are hundreds of mm; clean gap ~20-500mm.
+static constexpr double kSpikeJump = 0.08;    // one-tick jump that starts a spike window (m)
+static constexpr double kReturnDist = 0.04;   // how close rel must return to pre-spike to recover (m)
+static constexpr int kSpikeHold = 5;          // samples (~0.1s) tolerated off-position before accepting new baseline
+static constexpr double kRotSpikeJump = 10.0; // one-tick target rotation jump that starts a spike window (degrees)
+static constexpr double kRotReturnDist = 5.0; // how close rotation must return to pre-spike anchor to recover (degrees)
+
 void CalibrationCalc::PushSample(const Sample& sample) {
 	m_samples.push_back(sample);
 }
@@ -493,7 +504,118 @@ bool CalibrationCalc::CalibrateByRelPose(Eigen::AffineCompact3d &out) const {
 	return true;
 }
 
+int CalibrationCalc::LastConfidentSampleIndex() const {
+	const int n = (int)m_samples.size();
+	if (n == 0) return -1;
+	if (n == 1) return m_samples[0].valid ? 0 : -1;
 
+	// Walk the window oldest -> newest, tracking spike windows on the HMD-relative
+	// target position rel_k = target_k.trans - ref_k.trans. Subtracting ref removes
+	// common-mode playspace translation; using consecutive differences cancels any
+	// constant bias from an imprecise saved relative transform.
+	//
+	// A sample is also bad if target.rot jumps by more than kRotSpikeJump degrees
+	// relative to the last trusted sample's rotation. This catches transient bad
+	// rotation values that leave translation untouched.
+	//
+	// Both criteria feed into the same state machine:
+	//   - "anchor" is the last trusted rel value (the pre-spike baseline).
+	//   - When a one-tick jump exceeds kSpikeJump or kRotSpikeJump we enter a spike
+	//     window: samples are bad until both rel and rotation return within their
+	//     respective return thresholds (recovery) or the spike has persisted
+	//     kSpikeHold samples (accept new baseline).
+	int lastGood = -1;
+	Eigen::Vector3d anchor;
+	bool haveAnchor = false;
+	int spikeAge = 0; // 0 = not in a spike window
+	int spikeStartGood = -1; // lastGood at the moment the spike began
+
+	for (int k = 0; k < n; k++) {
+		if (!m_samples[k].valid) {
+			// Missing sample: doesn't advance lastGood, doesn't reset spike state.
+			continue;
+		}
+		const Eigen::Vector3d rel = m_samples[k].target.trans - m_samples[k].ref.trans;
+
+		if (!haveAnchor) {
+			anchor = rel;
+			haveAnchor = true;
+			lastGood = k;
+			continue;
+		}
+
+		// Rotation jump relative to the last trusted sample.
+		const Eigen::Quaterniond qCur(m_samples[k].target.rot);
+		const Eigen::Quaterniond qAnchor(m_samples[lastGood].target.rot);
+		double dot = std::abs(qCur.coeffs().dot(qAnchor.coeffs()));
+		if (dot > 1.0) dot = 1.0;
+		const double rotJumpDeg = 2.0 * std::acos(dot) * 180.0 / EIGEN_PI;
+
+		if (spikeAge == 0) {
+			double jump = (rel - anchor).norm();
+			if (jump > kSpikeJump || rotJumpDeg > kRotSpikeJump) {
+				// Spike begins; this sample is provisionally bad.
+				spikeAge = 1;
+				spikeStartGood = lastGood;
+			} else {
+				// Stable: trust it and slide the anchor forward.
+				anchor = rel;
+				lastGood = k;
+			}
+		} else {
+			if ((rel - anchor).norm() < kReturnDist && rotJumpDeg < kRotReturnDist) {
+				// Recovered: both translation and rotation are back near the anchor.
+				spikeAge = 0;
+				anchor = rel;
+				lastGood = k;
+			} else if (spikeAge >= kSpikeHold) {
+				// Persisted past the hold window: accept as a new steady state
+				// (playspace reset / settled position). Re-anchor here.
+				spikeAge = 0;
+				anchor = rel;
+				lastGood = k;
+			} else {
+				// Still inside an unresolved spike: keep rolling back to the last
+				// good sample from before the spike started.
+				spikeAge++;
+				lastGood = spikeStartGood;
+			}
+		}
+	}
+
+	return lastGood;
+}
+
+bool CalibrationCalc::ComputeLockedFromLatest() {
+	// Preconditions: the relative transform is locked and we have a fresh sample.
+	// We gate on lockRelativePosition alone (matching the original locked branch
+	// in ComputeIncremental) - the lock is the user asserting the stored relative
+	// transform is good, regardless of the m_relativePosCalibrated flag (which is
+	// reset to false by EndContinuousCalibration and is often false on load).
+	if (!lockRelativePosition)
+		return false;
+	if (m_samples.empty())
+		return false;
+
+	// Roll back to the most recent sample we are confident in. When the latest
+	// sample is corrupted by a tracking spike or an in-progress drift slide, this
+	// returns an earlier good sample instead; the visible correction is small
+	// because inter-sample motion between adjacent good samples is tiny.
+	const int idx = LastConfidentSampleIndex();
+	if (idx < 0) return false;
+
+	const Sample &chosen = m_samples[idx];
+
+	// Same math as CalibrateByRelPose, but on a single sample (no averaging):
+	//   C = R * S * T^-1
+	// where R = reference world pose, S = refToTarget pose, T = target world pose.
+	Eigen::AffineCompact3d calibration(
+		chosen.ref.ToAffine() * m_refToTargetPose * chosen.target.ToAffine().inverse());
+
+	m_estimatedTransformation = calibration;
+	m_isValid = true;
+	return true;
+}
 
 bool CalibrationCalc::ComputeOneshot() {
 	auto calibration = ComputeCalibration();
