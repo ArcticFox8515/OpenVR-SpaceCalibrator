@@ -121,6 +121,11 @@ void CalibrationCalc::Clear() {
 	m_relativePosCalibrated = false;
 }
 
+void CalibrationCalc::ClearSamples()
+{
+	m_samples.clear();
+}
+
 Eigen::Vector3d CalibrationCalc::CalibrateRotation() const {
 	std::vector<DSample> deltas;
 
