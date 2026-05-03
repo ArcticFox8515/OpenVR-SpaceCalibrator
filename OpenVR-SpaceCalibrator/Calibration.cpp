@@ -169,17 +169,23 @@ namespace {
 		bool ok = true;
 		if (!reference.poseIsValid)
 		{
-			CalCtx.Log("Reference device is not tracking\n"); ok = false;
+			CalCtx.Log("Reference device is not tracking\n");
+			ok = false;
 		}
 		if (!target.poseIsValid)
 		{
-			CalCtx.Log("Target device is not tracking\n"); ok = false;
+			CalCtx.Log("Target device is not tracking\n");
+			ok = false;
 		}
 		if (!ok)
 		{
 			if (CalCtx.state != CalibrationState::Continuous) {
 				CalCtx.Log("Aborting calibration!\n");
 				CalCtx.state = CalibrationState::None;
+			}
+			else
+			{
+				calibration.ClearSamples();
 			}
 			return false;
 		}

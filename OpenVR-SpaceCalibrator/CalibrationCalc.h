@@ -93,6 +93,7 @@ public:
 
 	void PushSample(const Sample& sample);
 	void Clear();
+	void ClearSamples();
 
 	bool ComputeOneshot();
 	bool ComputeIncremental(bool &lerp, double threshold);
