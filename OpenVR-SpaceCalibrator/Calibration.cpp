@@ -157,14 +157,95 @@ namespace {
 		return Pose(xform);
 	}
 
-	bool CollectSample(const CalibrationContext& ctx)
+	// Extrapolate a driver pose forward by dt seconds using the velocity/angular
+	// velocity fields already present in the pose. Modifies the pose in-place.
+	// Position:  pos' = pos + vel * dt
+	// Rotation:  q'   = exp(angVel * dt/2) * q   (first-order quaternion integration)
+	void ExtrapolatePose(vr::DriverPose_t &pose, double dt)
 	{
-		vr::DriverPose_t reference, target;
-		reference.poseIsValid = false;
-		target.poseIsValid = false;
+		pose.vecPosition[0] += pose.vecVelocity[0] * dt;
+		pose.vecPosition[1] += pose.vecVelocity[1] * dt;
+		pose.vecPosition[2] += pose.vecVelocity[2] * dt;
 
-		reference = ctx.devicePoses[ctx.referenceID];
-		target = ctx.devicePoses[ctx.targetID];
+		double wx = pose.vecAngularVelocity[0];
+		double wy = pose.vecAngularVelocity[1];
+		double wz = pose.vecAngularVelocity[2];
+		double norm = std::sqrt(wx*wx + wy*wy + wz*wz);
+		if (norm > 1e-9)
+		{
+			double halfAngle = norm * dt * 0.5;
+			double s = std::sin(halfAngle) / norm;
+			double dqw = std::cos(halfAngle);
+			double dqx = wx * s;
+			double dqy = wy * s;
+			double dqz = wz * s;
+
+			vr::HmdQuaternion_t q = pose.qRotation;
+			pose.qRotation.w = dqw*q.w - dqx*q.x - dqy*q.y - dqz*q.z;
+			pose.qRotation.x = dqw*q.x + dqx*q.w + dqy*q.z - dqz*q.y;
+			pose.qRotation.y = dqw*q.y - dqx*q.z + dqy*q.w + dqz*q.x;
+			pose.qRotation.z = dqw*q.z + dqx*q.y - dqy*q.x + dqz*q.w;
+		}
+	}
+
+	// Returns the signed QPC tick delta between two augmented poses, in seconds.
+	// Subtracts raw QuadPart integers first to preserve precision, then divides by frequency.
+	// Also accounts for poseTimeOffset in each pose (pose age relative to PoseUpdated() call).
+	double PoseDeltaSeconds(
+		const protocol::DriverPoseShmem::AugmentedPose &a,
+		const protocol::DriverPoseShmem::AugmentedPose &b)
+	{
+		static double qpcFreq = 0.0;
+		if (qpcFreq == 0.0)
+		{
+			LARGE_INTEGER f;
+			QueryPerformanceFrequency(&f);
+			qpcFreq = static_cast<double>(f.QuadPart);
+		}
+		double shmemDelta = static_cast<double>(b.sample_time.QuadPart - a.sample_time.QuadPart) / qpcFreq;
+		return shmemDelta + (b.pose.poseTimeOffset - a.pose.poseTimeOffset);
+	}
+
+	bool CollectSample(const CalibrationContext &ctx)
+	{
+		const auto &refAug    = ctx.devicePoses[ctx.referenceID];
+		const auto &targetAug = ctx.devicePoses[ctx.targetID];
+
+		vr::DriverPose_t reference = refAug.pose;
+		vr::DriverPose_t target    = targetAug.pose;
+
+		const double delta = PoseDeltaSeconds(refAug, targetAug);
+		constexpr double kStaleThreshold = 0.250;
+		if (std::abs(delta) > kStaleThreshold)
+		{
+			if (delta > 0.0)
+			{
+				reference.poseIsValid = false;
+			}
+			else
+			{
+				target.poseIsValid = false;
+			}
+		}
+		else
+		{
+			if (delta > 0.0)
+			{
+				ExtrapolatePose(reference, delta);
+			}
+			else
+			{
+				ExtrapolatePose(target, -delta);
+			}
+		}
+
+		Metrics::WritePoseLogEntry(
+			refAug.sample_time.QuadPart, targetAug.sample_time.QuadPart,
+			delta,
+			refAug.pose, targetAug.pose,
+			reference, target,
+			reference.poseIsValid && target.poseIsValid
+		);
 
 		bool ok = true;
 		if (!reference.poseIsValid)
@@ -183,14 +264,22 @@ namespace {
 				CalCtx.Log("Aborting calibration!\n");
 				CalCtx.state = CalibrationState::None;
 			}
-			else if (!ctx.lockRelativePosition)
+			else
 			{
-				// Normal continuous calibration restarts sample accumulation from
-				// scratch on a tracking dropout. In locked mode we must NOT clear:
-				// the window is our rollback history, and a slide commonly ends in
-				// a brief tracking loss - clearing would discard the last good
-				// sample exactly when we need it. Just skip pushing this frame.
-				calibration.ClearSamples();
+				if (ctx.lockRelativePosition)
+				{
+					// Pushing invalid sample so CalibrationCalc takes it into account
+					calibration.PushSample(Sample());
+				}
+				else
+				{
+					// Normal continuous calibration restarts sample accumulation from
+					// scratch on a tracking dropout. In locked mode we must NOT clear:
+					// the window is our rollback history, and a slide commonly ends in
+					// a brief tracking loss - clearing would discard the last good
+					// sample exactly when we need it.
+					calibration.ClearSamples();
+				}
 			}
 			return false;
 		}
@@ -423,7 +512,7 @@ void CalibrationTick(double time)
 	ctx.timeLastTick = time;
 	shmem.ReadNewPoses([&](const protocol::DriverPoseShmem::AugmentedPose& augmented_pose) {
 		if (augmented_pose.deviceId >= 0 && augmented_pose.deviceId <= vr::k_unMaxTrackedDeviceCount) {
-			ctx.devicePoses[augmented_pose.deviceId] = augmented_pose.pose;
+			ctx.devicePoses[augmented_pose.deviceId] = augmented_pose;
 		}
 	});
 

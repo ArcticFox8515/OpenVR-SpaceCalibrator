@@ -63,7 +63,7 @@ struct CalibrationContext
 	};
 	Speed calibrationSpeed = FAST;
 
-	vr::DriverPose_t devicePoses[vr::k_unMaxTrackedDeviceCount];
+	protocol::DriverPoseShmem::AugmentedPose devicePoses[vr::k_unMaxTrackedDeviceCount];
 
 	CalibrationContext() {
 		calibratedScale = 1.0;
@@ -181,12 +181,12 @@ struct CalibrationContext
 
 	bool TargetPoseIsValid() const {
 		return targetID >= 0 && targetID <= vr::k_unMaxTrackedDeviceCount
-			&& devicePoses[targetID].poseIsValid;
+			&& devicePoses[targetID].pose.poseIsValid;
 	}
 
 	bool ReferencePoseIsValid() const {
 		return referenceID >= 0 && referenceID <= vr::k_unMaxTrackedDeviceCount
-			&& devicePoses[referenceID].poseIsValid;
+			&& devicePoses[referenceID].pose.poseIsValid;
 	}
 };
 
