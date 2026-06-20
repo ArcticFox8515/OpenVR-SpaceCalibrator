@@ -212,4 +212,126 @@ namespace Metrics {
 		}
 		logFile.flush();
 	}
+
+	// --- Pose telemetry log ---
+
+	static std::ofstream poseLogFile;
+	static bool poseLogFileIsOpen = false;
+	static bool poseLogFailedToOpen = false;
+
+	static bool OpenPoseLogFile()
+	{
+		PWSTR RootPath = NULL;
+		if (S_OK != SHGetKnownFolderPath(FOLDERID_LocalAppDataLow, 0, NULL, &RootPath)) {
+			CoTaskMemFree(RootPath);
+			return false;
+		}
+
+		std::wstring path(RootPath);
+		CoTaskMemFree(RootPath);
+
+		path += LR"(\OpenVR-SpaceCalibrator)";
+		if (CreateDirectoryW(path.c_str(), 0) == 0 && GetLastError() != ERROR_ALREADY_EXISTS)
+			return false;
+
+		path += LR"(\Logs)";
+		if (CreateDirectoryW(path.c_str(), 0) == 0 && GetLastError() != ERROR_ALREADY_EXISTS)
+			return false;
+
+		SYSTEMTIME now;
+		GetSystemTime(&now);
+
+		size_t dateBufLen = GetDateFormatW(LOCALE_USER_DEFAULT, 0, &now, L"yyyy-MM-dd", NULL, 0);
+		std::vector<WCHAR> dateBuf(dateBufLen);
+		if (!GetDateFormatEx(LOCALE_NAME_INVARIANT, 0, &now, L"yyyy-MM-dd", &dateBuf[0], dateBufLen, NULL)) return false;
+
+		size_t timeBufLen = GetTimeFormatW(LOCALE_USER_DEFAULT, 0, &now, L"HH-mm-ss", NULL, 0);
+		std::vector<WCHAR> timeBuf(timeBufLen);
+		if (!GetTimeFormatEx(LOCALE_NAME_INVARIANT, 0, &now, L"HH-mm-ss", &timeBuf[0], timeBufLen)) return false;
+
+		path += LR"(\pose_log.)";
+		path += &dateBuf[0];
+		path += L"T";
+		path += &timeBuf[0];
+		path += L".csv";
+
+		poseLogFile.open(path);
+		if (poseLogFile.fail())
+			return false;
+
+		poseLogFile <<
+			"Timestamp,"
+			"RefSampleTime,TargetSampleTime,TimeDelta,"
+			"Ref_PoseTimeOffset,Target_PoseTimeOffset,"
+			"Accepted,"
+			"Ref_Before_Pos_X,Ref_Before_Pos_Y,Ref_Before_Pos_Z,"
+			"Ref_Before_Rot_W,Ref_Before_Rot_X,Ref_Before_Rot_Y,Ref_Before_Rot_Z,"
+			"Ref_Before_Vel_X,Ref_Before_Vel_Y,Ref_Before_Vel_Z,"
+			"Ref_Before_AngVel_X,Ref_Before_AngVel_Y,Ref_Before_AngVel_Z,"
+			"Target_Before_Pos_X,Target_Before_Pos_Y,Target_Before_Pos_Z,"
+			"Target_Before_Rot_W,Target_Before_Rot_X,Target_Before_Rot_Y,Target_Before_Rot_Z,"
+			"Target_Before_Vel_X,Target_Before_Vel_Y,Target_Before_Vel_Z,"
+			"Target_Before_AngVel_X,Target_Before_AngVel_Y,Target_Before_AngVel_Z,"
+			"Ref_After_Pos_X,Ref_After_Pos_Y,Ref_After_Pos_Z,"
+			"Ref_After_Rot_W,Ref_After_Rot_X,Ref_After_Rot_Y,Ref_After_Rot_Z,"
+			"Target_After_Pos_X,Target_After_Pos_Y,Target_After_Pos_Z,"
+			"Target_After_Rot_W,Target_After_Rot_X,Target_After_Rot_Y,Target_After_Rot_Z\n";
+
+		poseLogFileIsOpen = true;
+		return true;
+	}
+
+	static bool CheckPoseLogOpen()
+	{
+		if (!enableLogs) {
+			if (poseLogFileIsOpen)
+				poseLogFile.close();
+			poseLogFileIsOpen = false;
+			poseLogFailedToOpen = false;
+			return false;
+		}
+		if (poseLogFailedToOpen) return false;
+		if (!poseLogFileIsOpen && !OpenPoseLogFile()) {
+			poseLogFailedToOpen = true;
+			return false;
+		}
+		return true;
+	}
+
+	void WritePoseLogEntry(
+		long long refSampleTime,
+		long long targetSampleTime,
+		double delta,
+		const vr::DriverPose_t &refBefore,
+		const vr::DriverPose_t &targetBefore,
+		const vr::DriverPose_t &refAfter,
+		const vr::DriverPose_t &targetAfter,
+		bool accepted)
+	{
+		if (!CheckPoseLogOpen()) return;
+
+		poseLogFile
+			<< timestamp() << ","
+			<< refSampleTime << "," << targetSampleTime << "," << delta << ","
+			<< refBefore.poseTimeOffset << "," << targetBefore.poseTimeOffset << ","
+			<< (accepted ? 1 : 0) << ","
+			// ref before: position, rotation, velocity, angular velocity
+			<< refBefore.vecPosition[0] << "," << refBefore.vecPosition[1] << "," << refBefore.vecPosition[2] << ","
+			<< refBefore.qRotation.w << "," << refBefore.qRotation.x << "," << refBefore.qRotation.y << "," << refBefore.qRotation.z << ","
+			<< refBefore.vecVelocity[0] << "," << refBefore.vecVelocity[1] << "," << refBefore.vecVelocity[2] << ","
+			<< refBefore.vecAngularVelocity[0] << "," << refBefore.vecAngularVelocity[1] << "," << refBefore.vecAngularVelocity[2] << ","
+			// target before: position, rotation, velocity, angular velocity
+			<< targetBefore.vecPosition[0] << "," << targetBefore.vecPosition[1] << "," << targetBefore.vecPosition[2] << ","
+			<< targetBefore.qRotation.w << "," << targetBefore.qRotation.x << "," << targetBefore.qRotation.y << "," << targetBefore.qRotation.z << ","
+			<< targetBefore.vecVelocity[0] << "," << targetBefore.vecVelocity[1] << "," << targetBefore.vecVelocity[2] << ","
+			<< targetBefore.vecAngularVelocity[0] << "," << targetBefore.vecAngularVelocity[1] << "," << targetBefore.vecAngularVelocity[2] << ","
+			// ref after: position, rotation
+			<< refAfter.vecPosition[0] << "," << refAfter.vecPosition[1] << "," << refAfter.vecPosition[2] << ","
+			<< refAfter.qRotation.w << "," << refAfter.qRotation.x << "," << refAfter.qRotation.y << "," << refAfter.qRotation.z << ","
+			// target after: position, rotation
+			<< targetAfter.vecPosition[0] << "," << targetAfter.vecPosition[1] << "," << targetAfter.vecPosition[2] << ","
+			<< targetAfter.qRotation.w << "," << targetAfter.qRotation.x << "," << targetAfter.qRotation.y << "," << targetAfter.qRotation.z << "\n";
+
+		poseLogFile.flush();
+	}
 }

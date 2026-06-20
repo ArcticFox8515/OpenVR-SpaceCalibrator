@@ -3,6 +3,7 @@
 #include <deque>
 #include <utility>
 #include <Eigen/Dense>
+#include "../Protocol.h"
 
 namespace Metrics {
 	extern double TimeSpan, CurrentTime;
@@ -55,4 +56,22 @@ namespace Metrics {
 
 	void WriteLogAnnotation(const char* s);
 	void WriteLogEntry();
+
+	// Per-sample pose telemetry log.
+	// refSampleTime / targetSampleTime: raw QPC tick counts from sample_time (integer, no precision loss).
+	// delta:         signed seconds between reference and target capture times
+	//                (positive = target is newer, computed from integer ticks + poseTimeOffset).
+	// refBefore / targetBefore:   poses as read from shared memory (before any extrapolation).
+	// refAfter  / targetAfter:    poses used for the sample (after any extrapolation).
+	// accepted:      whether the sample was pushed to the calibration buffer.
+	void WritePoseLogEntry(
+		long long refSampleTime,
+		long long targetSampleTime,
+		double delta,
+		const vr::DriverPose_t &refBefore,
+		const vr::DriverPose_t &targetBefore,
+		const vr::DriverPose_t &refAfter,
+		const vr::DriverPose_t &targetAfter,
+		bool accepted
+	);
 }
