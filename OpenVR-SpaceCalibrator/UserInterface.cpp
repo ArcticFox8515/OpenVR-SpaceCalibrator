@@ -298,7 +298,10 @@ void CCal_BasicInfo() {
 	ImGui::SameLine();
 	ImGui::Checkbox("Enable debug logs", &Metrics::enableLogs);
 	ImGui::SameLine();
-	ImGui::Checkbox("Lock relative transform", &CalCtx.lockRelativePosition);
+	if (ImGui::Checkbox("Lock relative transform", &CalCtx.lockRelativePosition))
+	{
+		SaveProfile(CalCtx);
+	}
 
 	// Status field...
 
