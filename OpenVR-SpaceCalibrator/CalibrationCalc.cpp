@@ -106,6 +106,42 @@ namespace {
 		ds.target.normalize();
 		return ds;
 	}
+
+	// Least-squares projection of a rotation matrix onto the yaw-only subgroup.
+	// For a pure Ry(t): m(0,2) = sin t, m(2,0) = -sin t, m(0,0) = m(2,2) = cos t,
+	// so this is exact for yaw-only input and the closest yaw otherwise.
+	double YawFromRotation(const Eigen::Matrix3d& m)
+	{
+		return std::atan2(m(0, 2) - m(2, 0), m(0, 0) + m(2, 2));
+	}
+
+	// Matches the convention used by CalibrateRotation/VRRotationQuat, which build
+	// AngleAxisd(yaw, UnitY()) from euler(0, yaw, 0).
+	Eigen::Matrix3d YawRotation(double yaw)
+	{
+		return Eigen::Matrix3d(Eigen::AngleAxisd(yaw, Eigen::Vector3d::UnitY()));
+	}
+
+	double WrapAngle(double a)
+	{
+		while (a > EIGEN_PI) a -= 2.0 * EIGEN_PI;
+		while (a < -EIGEN_PI) a += 2.0 * EIGEN_PI;
+		return a;
+	}
+
+	double Median(std::vector<double>& values)
+	{
+		const size_t n = values.size();
+		std::nth_element(values.begin(), values.begin() + n / 2, values.end());
+		double hi = values[n / 2];
+		if (n % 2 == 1)
+			return hi;
+
+		// Even count: average the two central order statistics. nth_element already
+		// partitioned, so the lower one is the max of the left partition.
+		double lo = *std::max_element(values.begin(), values.begin() + n / 2);
+		return 0.5 * (lo + hi);
+	}
 }
 
 const double CalibrationCalc::AxisVarianceThreshold = 0.001;
@@ -119,6 +155,21 @@ static constexpr int kSpikeHold = 5;          // samples (~0.1s) tolerated off-p
 static constexpr double kRotSpikeJump = 10.0; // one-tick target rotation jump that starts a spike window (degrees)
 static constexpr double kRotReturnDist = 5.0; // how close rotation must return to pre-spike anchor to recover (degrees)
 
+// Locked-mode estimator constants (ComputeLockedFromLatest).
+//
+// Error budget rationale: the locked transform pins the paired target device
+// exactly, so residual rotation error shows up at every other target device
+// scaled by its distance from that device (~1.3m head-to-foot). 1 degree of
+// rotation error is therefore ~2.3cm at the feet, while translation error is
+// common-mode and does not get levered. Hence: filter rotation hard, pass
+// translation straight through.
+static constexpr int kLockedMedianSamples = 5;    // ~0.25s at the 20Hz tick rate
+static constexpr double kYawTauSlow = 2.5;        // yaw filter time constant, normal band (s)
+static constexpr double kYawTauFast = 0.20;       // yaw filter time constant, fast band (s)
+static constexpr double kYawFastEnterDeg = 2.0;   // yaw error that arms fast tracking (degrees)
+static constexpr double kYawFastExitDeg = 0.5;    // yaw error at which fast tracking disarms (degrees)
+static constexpr int kYawFastHold = 5;            // ticks the error must persist before fast tracking engages
+
 void CalibrationCalc::PushSample(const Sample& sample) {
 	m_samples.push_back(sample);
 }
@@ -130,6 +181,10 @@ void CalibrationCalc::Clear() {
 	m_axisVariance = 0.0;
 	m_refToTargetPose = Eigen::AffineCompact3d::Identity();
 	m_relativePosCalibrated = false;
+	m_lockedYawValid = false;
+	m_lockedYawFast = false;
+	m_lockedYawFastTicks = 0;
+	m_lockedYawFiltered = 0.0;
 }
 
 void CalibrationCalc::ClearSamples()
@@ -504,10 +559,16 @@ bool CalibrationCalc::CalibrateByRelPose(Eigen::AffineCompact3d &out) const {
 	return true;
 }
 
-int CalibrationCalc::LastConfidentSampleIndex() const {
+int CalibrationCalc::LastConfidentSampleIndex(std::vector<int> *goodIndices) const {
+	if (goodIndices) goodIndices->clear();
+
 	const int n = (int)m_samples.size();
 	if (n == 0) return -1;
-	if (n == 1) return m_samples[0].valid ? 0 : -1;
+	if (n == 1) {
+		if (!m_samples[0].valid) return -1;
+		if (goodIndices) goodIndices->push_back(0);
+		return 0;
+	}
 
 	// Walk the window oldest -> newest, tracking spike windows on the HMD-relative
 	// target position rel_k = target_k.trans - ref_k.trans. Subtracting ref removes
@@ -541,6 +602,7 @@ int CalibrationCalc::LastConfidentSampleIndex() const {
 			anchor = rel;
 			haveAnchor = true;
 			lastGood = k;
+			if (goodIndices) goodIndices->push_back(k);
 			continue;
 		}
 
@@ -561,6 +623,7 @@ int CalibrationCalc::LastConfidentSampleIndex() const {
 				// Stable: trust it and slide the anchor forward.
 				anchor = rel;
 				lastGood = k;
+				if (goodIndices) goodIndices->push_back(k);
 			}
 		} else {
 			if ((rel - anchor).norm() < kReturnDist && rotJumpDeg < kRotReturnDist) {
@@ -568,12 +631,14 @@ int CalibrationCalc::LastConfidentSampleIndex() const {
 				spikeAge = 0;
 				anchor = rel;
 				lastGood = k;
+				if (goodIndices) goodIndices->push_back(k);
 			} else if (spikeAge >= kSpikeHold) {
 				// Persisted past the hold window: accept as a new steady state
 				// (playspace reset / settled position). Re-anchor here.
 				spikeAge = 0;
 				anchor = rel;
 				lastGood = k;
+				if (goodIndices) goodIndices->push_back(k);
 			} else {
 				// Still inside an unresolved spike: keep rolling back to the last
 				// good sample from before the spike started.
@@ -586,7 +651,7 @@ int CalibrationCalc::LastConfidentSampleIndex() const {
 	return lastGood;
 }
 
-bool CalibrationCalc::ComputeLockedFromLatest() {
+bool CalibrationCalc::ComputeLockedFromLatest(double dt) {
 	// Preconditions: the relative transform is locked and we have a fresh sample.
 	// We gate on lockRelativePosition alone (matching the original locked branch
 	// in ComputeIncremental) - the lock is the user asserting the stored relative
@@ -597,20 +662,98 @@ bool CalibrationCalc::ComputeLockedFromLatest() {
 	if (m_samples.empty())
 		return false;
 
-	// Roll back to the most recent sample we are confident in. When the latest
-	// sample is corrupted by a tracking spike or an in-progress drift slide, this
-	// returns an earlier good sample instead; the visible correction is small
-	// because inter-sample motion between adjacent good samples is tiny.
-	const int idx = LastConfidentSampleIndex();
-	if (idx < 0) return false;
+	// Roll back to the samples we are confident in. When recent samples are
+	// corrupted by a tracking spike or an in-progress drift slide, the state
+	// machine excludes them and we fall back to earlier good ones.
+	static thread_local std::vector<int> good;
+	good.clear();
+	const int idx = LastConfidentSampleIndex(&good);
+	if (idx < 0 || good.empty()) return false;
 
-	const Sample &chosen = m_samples[idx];
+	// Use the newest few confident samples so a single noisy pose cannot move the
+	// playspace. At the 20Hz tick rate this is ~0.25s of history, which is short
+	// enough that the correction is still effectively instant.
+	const size_t count = std::min<size_t>(good.size(), kLockedMedianSamples);
+	const size_t first = good.size() - count;
 
-	// Same math as CalibrateByRelPose, but on a single sample (no averaging):
-	//   C = R * S * T^-1
-	// where R = reference world pose, S = refToTarget pose, T = target world pose.
-	Eigen::AffineCompact3d calibration(
-		chosen.ref.ToAffine() * m_refToTargetPose * chosen.target.ToAffine().inverse());
+	// Per-sample yaw of the full estimate C = R * S * T^-1, projected onto
+	// yaw-only. Both tracking systems are gravity-aligned via their IMUs, so the
+	// true C has no pitch or roll - anything we measure there is pure error, and
+	// letting it through tilts the entire target playspace.
+	const Eigen::Matrix3d sRot = m_refToTargetPose.rotation();
+
+	std::vector<double> yaws;
+	yaws.reserve(count);
+
+	const double newestYaw = YawFromRotation(
+		Eigen::Matrix3d(m_samples[good.back()].ref.rot * sRot * m_samples[good.back()].target.rot.transpose()));
+
+	for (size_t i = first; i < good.size(); i++) {
+		const Sample &s = m_samples[good[i]];
+		const double yaw = YawFromRotation(Eigen::Matrix3d(s.ref.rot * sRot * s.target.rot.transpose()));
+		// Median in the wrapped-difference domain relative to the newest sample so
+		// the wrap point cannot split the set.
+		yaws.push_back(WrapAngle(yaw - newestYaw));
+	}
+
+	const double yawRaw = WrapAngle(newestYaw + Median(yaws));
+
+	// Yaw low-pass. Real yaw drift between two gravity-aligned systems is slow
+	// (SLAM heading error accumulating), so heavy damping costs nothing. A large
+	// sustained error means an actual re-localisation event, which we do want to
+	// chase quickly - hence the banded time constant with hysteresis.
+	if (!m_lockedYawValid) {
+		m_lockedYawFiltered = yawRaw;
+		m_lockedYawValid = true;
+		m_lockedYawFast = false;
+		m_lockedYawFastTicks = 0;
+	}
+	else {
+		const double err = WrapAngle(yawRaw - m_lockedYawFiltered);
+		const double errDeg = std::abs(err) * 180.0 / EIGEN_PI;
+
+		if (m_lockedYawFast) {
+			if (errDeg < kYawFastExitDeg) {
+				m_lockedYawFast = false;
+				m_lockedYawFastTicks = 0;
+			}
+		}
+		else if (errDeg > kYawFastEnterDeg) {
+			if (++m_lockedYawFastTicks >= kYawFastHold)
+				m_lockedYawFast = true;
+		}
+		else {
+			m_lockedYawFastTicks = 0;
+		}
+
+		const double tau = m_lockedYawFast ? kYawTauFast : kYawTauSlow;
+		// Parenthesised to dodge the Windows min/max macros pulled in via Calibration.h.
+		const double clampedDt = (std::max)(0.001, (std::min)(dt, 0.5));
+		const double alpha = 1.0 - std::exp(-clampedDt / tau);
+		m_lockedYawFiltered = WrapAngle(m_lockedYawFiltered + alpha * err);
+	}
+
+	const Eigen::Matrix3d rotC = YawRotation(m_lockedYawFiltered);
+
+	// Translation, instant. Derived from the final rotation rather than taken from
+	// R * S * T^-1, so the paired target device still lands exactly on R * S no
+	// matter how far the filtered yaw lags the raw measurement:
+	//   C * T = R * S  =>  t_C = (R * S).trans - rotC * T.trans
+	std::vector<double> tx, ty, tz;
+	tx.reserve(count); ty.reserve(count); tz.reserve(count);
+
+	for (size_t i = first; i < good.size(); i++) {
+		const Sample &s = m_samples[good[i]];
+		const Eigen::Vector3d refTargetWorld = s.ref.trans + s.ref.rot * m_refToTargetPose.translation();
+		const Eigen::Vector3d t = refTargetWorld - rotC * s.target.trans;
+		tx.push_back(t.x()); ty.push_back(t.y()); tz.push_back(t.z());
+	}
+
+	const Eigen::Vector3d transC(Median(tx), Median(ty), Median(tz));
+
+	Eigen::AffineCompact3d calibration;
+	calibration.linear() = rotC;
+	calibration.translation() = transC;
 
 	m_estimatedTransformation = calibration;
 	m_isValid = true;
