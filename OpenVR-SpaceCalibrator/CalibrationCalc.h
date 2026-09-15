@@ -66,6 +66,11 @@ public:
 		return m_estimatedTransformation;
 	}
 
+	// The locked transform is constrained to yaw-only, so callers can use this
+	// directly instead of round-tripping through EulerRotation() (which has
+	// representation ambiguity for large angles).
+	double LockedYawDegrees() const { return m_lockedYawFiltered * 180.0 / EIGEN_PI; }
+
 	const Eigen::Vector3d EulerRotation() const {
 		auto rot = m_estimatedTransformation.rotation();
 		return rot.eulerAngles(2, 1, 0) * 180.0 / EIGEN_PI;
@@ -98,12 +103,23 @@ public:
 	bool ComputeOneshot();
 	bool ComputeIncremental(bool &lerp, double threshold);
 
-	// Fast continuous path: when the relative transform is locked and already
-	// calibrated, derive the playspace calibration from a single (the latest)
-	// sample instead of collecting and averaging a full batch. Returns false if
-	// preconditions aren't met (no samples / relative pose not yet established),
-	// in which case the caller should fall back to the regular logic.
-	bool ComputeLockedFromLatest();
+	// Fast continuous path: when the relative transform is locked, derive the
+	// playspace calibration from the most recent confident samples instead of
+	// collecting and averaging a full batch.
+	//
+	// The transform is split by error sensitivity:
+	//   - Rotation is projected onto yaw-only (both tracking systems are
+	//     gravity-aligned, so any pitch/roll in the estimate is pure error) and
+	//     low-pass filtered, because a rotation error is levered onto every other
+	//     device in the target system by its distance from the paired device.
+	//   - Translation is taken instantly from the newest confident samples,
+	//     because a translation error is common-mode: it shifts the paired device
+	//     and every other target device by the same amount.
+	//
+	// dt is the elapsed time since the previous call, in seconds; it drives the
+	// yaw filter. Returns false if preconditions aren't met (lock disabled / no
+	// confident samples), in which case the caller should not push a transform.
+	bool ComputeLockedFromLatest(double dt);
 
 	size_t SampleCount() const {
 		return m_samples.size();
@@ -124,6 +140,12 @@ private:
 	bool m_isValid;
 	Eigen::AffineCompact3d m_estimatedTransformation;
 	bool m_relativePosCalibrated = false;
+
+	// Locked-mode yaw filter state. See ComputeLockedFromLatest.
+	bool m_lockedYawValid = false;   // filter has been seeded
+	bool m_lockedYawFast = false;    // currently in the fast-tracking band
+	int m_lockedYawFastTicks = 0;    // consecutive ticks the raw yaw has been far off
+	double m_lockedYawFiltered = 0.0; // radians
 
 	/*
 	 * This affine transform estimates the pose of the target within the reference device's local pose space.
@@ -154,6 +176,11 @@ private:
 	// ComputeLockedFromLatest to roll back to the last good pose when the latest
 	// sample is corrupted by tracking instability (spikes / drift slides).
 	//
+	// If goodIndices is non-null it receives, in ascending order, every sample
+	// index the state machine accepted as trustworthy. The trailing entries are
+	// therefore the most recent confident samples, which lets callers form a
+	// robust (median) estimate instead of relying on a single sample.
+	//
 	// Rule (operating on rel_k = target_k.trans - ref_k.trans, which cancels
 	// common-mode playspace translation):
 	//  - A one-tick jump |rel_k - rel_{k-1}| > kSpikeJump starts a "spike window".
@@ -162,5 +189,5 @@ private:
 	//  - If the displacement persists beyond kSpikeHold samples, it is accepted as
 	//    a new steady state (playspace reset / settled drift) and samples are good
 	//    again, anchored to the new baseline.
-	int LastConfidentSampleIndex() const;
+	int LastConfidentSampleIndex(std::vector<int> *goodIndices = nullptr) const;
 };

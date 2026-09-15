@@ -353,34 +353,141 @@ static void SendDeviceTransform(const CalibrationContext &ctx, uint32_t id)
 // Lightweight per-tick transform push used by the locked continuous fast path.
 // Unlike ScanAndApplyProfile, this does NOT reset/disable devices, re-send
 // alignment params, or touch the chaperone. It only pushes the freshly computed
-// transform to the same set of target devices ScanAndApplyProfile would select
-// (devices on the target tracking system, excluding the HMD).
-static void ApplyContinuousTransform(CalibrationContext &ctx)
+// transform to the target device set resolved by TargetDeviceIds (devices on the
+// target tracking system, excluding the HMD) - the same selection
+// ScanAndApplyProfile would make.
+static void ApplyContinuousTransform(const CalibrationContext &ctx, const std::vector<uint32_t> &ids)
 {
 	if (!ctx.enabled)
 		return;
 
-	std::unique_ptr<char[]> buffer_array(new char[vr::k_unMaxPropertyStringSize]);
-	char* buffer = buffer_array.get();
-
-	for (uint32_t id = 0; id < vr::k_unMaxTrackedDeviceCount; ++id)
-	{
-		if (id == vr::k_unTrackedDeviceIndex_Hmd)
-			continue;
-
-		auto deviceClass = vr::VRSystem()->GetTrackedDeviceClass(id);
-		if (deviceClass == vr::TrackedDeviceClass_Invalid)
-			continue;
-
-		vr::ETrackedPropertyError err = vr::TrackedProp_Success;
-		vr::VRSystem()->GetStringTrackedDeviceProperty(id, vr::Prop_TrackingSystemName_String, buffer, vr::k_unMaxPropertyStringSize, &err);
-		if (err != vr::TrackedProp_Success)
-			continue;
-
-		if (std::string(buffer) != ctx.targetTrackingSystem)
-			continue;
-
+	for (uint32_t id : ids)
 		SendDeviceTransform(ctx, id);
+}
+
+namespace {
+	// --- Locked continuous mode state ---
+
+	// Cache of target-tracking-system device ids (HMD excluded). Rebuilding it
+	// costs one string property query per device slot, which is far too heavy to
+	// repeat on every tick of the locked fast path.
+	std::vector<uint32_t> lockedTargetIds;
+	double lockedTargetIdsTime = -1.0;
+
+	// The transform currently applied to the driver. Reference for the deadband:
+	// we only push when the candidate would move a held device by a visible
+	// amount, so pose noise does not continuously jiggle the playspace.
+	bool lockedAppliedValid = false;
+	Eigen::AffineCompact3d lockedApplied = Eigen::AffineCompact3d::Identity();
+	// Ticks remaining during which the fine deadband applies, so an in-progress
+	// correction is tracked precisely instead of in coarse steps.
+	int lockedFineTicks = 0;
+
+	// A device counts as holding still below these thresholds.
+	constexpr double kHeldVelocity = 0.03;    // m/s
+	constexpr double kHeldAngVelocity = 0.15; // rad/s
+
+	// Used only when no stationary device is visible: nominal head-to-foot
+	// distance, so the deadband still measures something levered rather than
+	// measuring the (always tiny) motion of the pinned paired device.
+	constexpr double kNominalLeverArm = 1.3; // m
+
+	// Deadband on predicted displacement at held devices.
+	constexpr double kDeadbandCoarse = 0.008; // m - arms a correction
+	constexpr double kDeadbandFine = 0.002;   // m - tracking resolution while correcting
+	constexpr int kDeadbandFineTicks = 20;    // ~1s at the 20Hz tick rate
+
+	void ResetLockedState()
+	{
+		lockedAppliedValid = false;
+		lockedApplied.setIdentity();
+		lockedFineTicks = 0;
+		lockedTargetIdsTime = -1.0;
+		lockedTargetIds.clear();
+	}
+
+	// Target-system devices excluding the HMD, cached for one second.
+	const std::vector<uint32_t> &TargetDeviceIds(const CalibrationContext &ctx, double time)
+	{
+		if (lockedTargetIdsTime >= 0.0 && (time - lockedTargetIdsTime) < 1.0)
+			return lockedTargetIds;
+
+		lockedTargetIdsTime = time;
+		lockedTargetIds.clear();
+
+		std::unique_ptr<char[]> buffer_array(new char[vr::k_unMaxPropertyStringSize]);
+		char *buffer = buffer_array.get();
+
+		for (uint32_t id = 0; id < vr::k_unMaxTrackedDeviceCount; ++id)
+		{
+			if (id == vr::k_unTrackedDeviceIndex_Hmd)
+				continue;
+
+			if (vr::VRSystem()->GetTrackedDeviceClass(id) == vr::TrackedDeviceClass_Invalid)
+				continue;
+
+			vr::ETrackedPropertyError err = vr::TrackedProp_Success;
+			vr::VRSystem()->GetStringTrackedDeviceProperty(id, vr::Prop_TrackingSystemName_String, buffer, vr::k_unMaxPropertyStringSize, &err);
+			if (err != vr::TrackedProp_Success)
+				continue;
+
+			if (std::string(buffer) != ctx.targetTrackingSystem)
+				continue;
+
+			lockedTargetIds.push_back(id);
+		}
+
+		return lockedTargetIds;
+	}
+
+	// Target-space positions of devices that are currently holding still. Their
+	// target-space pose is constant, so a change in the calibration transform
+	// moves them in the world by exactly the amount MaxProbeDisplacement
+	// computes - that displacement *is* the wobble the user sees on their feet.
+	//
+	// The paired target device is excluded: the transform is constructed to pin it
+	// exactly, so it never reports error.
+	void CollectHeldProbes(const CalibrationContext &ctx, const std::vector<uint32_t> &ids,
+		std::vector<Eigen::Vector3d> &out)
+	{
+		out.clear();
+
+		for (uint32_t id : ids)
+		{
+			if ((int32_t)id == ctx.targetID)
+				continue;
+
+			const vr::DriverPose_t &pose = ctx.devicePoses[id].pose;
+			if (!pose.poseIsValid || pose.result != vr::TrackingResult_Running_OK)
+				continue;
+
+			const double v2 = pose.vecVelocity[0] * pose.vecVelocity[0]
+				+ pose.vecVelocity[1] * pose.vecVelocity[1]
+				+ pose.vecVelocity[2] * pose.vecVelocity[2];
+			const double w2 = pose.vecAngularVelocity[0] * pose.vecAngularVelocity[0]
+				+ pose.vecAngularVelocity[1] * pose.vecAngularVelocity[1]
+				+ pose.vecAngularVelocity[2] * pose.vecAngularVelocity[2];
+
+			if (v2 > kHeldVelocity * kHeldVelocity || w2 > kHeldAngVelocity * kHeldAngVelocity)
+				continue;
+
+			out.push_back(ConvertPose(pose).trans);
+		}
+	}
+
+	// Largest world displacement that replacing `applied` with `candidate` would
+	// apply to any probe point (probes are in target space).
+	double MaxProbeDisplacement(const Eigen::AffineCompact3d &applied,
+		const Eigen::AffineCompact3d &candidate,
+		const std::vector<Eigen::Vector3d> &probes)
+	{
+		double worst = 0.0;
+		for (const auto &p : probes)
+		{
+			const double d = (candidate * p - applied * p).norm();
+			if (d > worst) worst = d;
+		}
+		return worst;
 	}
 }
 
@@ -480,6 +587,7 @@ void StartContinuousCalibration() {
 	CalCtx.state = CalibrationState::Continuous;
 	calibration.setRelativeTransformation(CalCtx.refToTargetPose, CalCtx.relativePosCalibrated);
 	calibration.lockRelativePosition = CalCtx.lockRelativePosition;
+	ResetLockedState();
 	if (CalCtx.lockRelativePosition) {
 		CalCtx.Log("Relative position locked");
 	}
@@ -492,6 +600,7 @@ void StartContinuousCalibration() {
 void EndContinuousCalibration() {
 	CalCtx.state = CalibrationState::None;
 	CalCtx.relativePosCalibrated = false;
+	ResetLockedState();
 	SaveProfile(CalCtx);
 	Metrics::WriteLogAnnotation("EndContinuousCalibration");
 }
@@ -502,7 +611,8 @@ void CalibrationTick(double time)
 		return;
 
 	auto &ctx = CalCtx;
-	if ((time - ctx.timeLastTick) < 0.05)
+	const double sinceLastTick = time - ctx.timeLastTick;
+	if (sinceLastTick < 0.05)
 		return;
 
 	if (ctx.state == CalibrationState::Continuous || ctx.state == CalibrationState::ContinuousStandby) {
@@ -618,8 +728,9 @@ void CalibrationTick(double time)
 	}
 
 	// Fast continuous path: relative transform locked. Adjust the tracker
-	// transform from the single latest sample every tick instead of collecting/
-	// averaging a full batch and running the heavy incremental calibration.
+	// transform from the most recent confident samples every tick instead of
+	// collecting/averaging a full batch and running the heavy incremental
+	// calibration.
 	if (ctx.state == CalibrationState::Continuous && ctx.lockRelativePosition)
 	{
 		// Drive the main loop fast so we actually push transforms continuously.
@@ -636,17 +747,65 @@ void CalibrationTick(double time)
 		// as the normal calibration path rather than a smaller dedicated window.
 		while (calibration.SampleCount() > CalCtx.SampleCount()) calibration.ShiftSample();
 
-		if (calibration.ComputeLockedFromLatest())
+		if (calibration.ComputeLockedFromLatest(sinceLastTick))
 		{
-			ctx.calibratedRotation = calibration.EulerRotation();
-			ctx.calibratedTranslation = calibration.Transformation().translation() * 100.0; // cm units
+			const Eigen::AffineCompact3d candidate = calibration.Transformation();
+			const std::vector<uint32_t> &ids = TargetDeviceIds(ctx, time);
 
-			// Ensure the device push isn't gated by stale enabled state. Normally
-			// ScanAndApplyProfile sets ctx.enabled, but once calibration.isValid()
-			// becomes true it stops being called, so set it here to match.
-			ctx.enabled = ctx.validProfile;
+			// Measure what the candidate would do to devices that are holding
+			// still. Since they are not moving, that displacement is pure error.
+			static std::vector<Eigen::Vector3d> probes;
+			CollectHeldProbes(ctx, ids, probes);
 
-			ApplyContinuousTransform(ctx);
+			if (probes.empty() && ctx.TargetPoseIsValid())
+			{
+				// Nothing is holding still (or nothing else is tracking). Fall back
+				// to a synthetic probe a nominal lever arm below the paired device,
+				// so the deadband still sees rotation error amplified the way a foot
+				// tracker would see it.
+				probes.push_back(ConvertPose(ctx.devicePoses[ctx.targetID].pose).trans
+					+ Eigen::Vector3d(0.0, -kNominalLeverArm, 0.0));
+			}
+
+			// With no probe at all we cannot measure the effect of the candidate, so
+			// the deadband must not be allowed to suppress the push indefinitely.
+			const bool canMeasure = !probes.empty();
+
+			const double displacement = (lockedAppliedValid && canMeasure)
+				? MaxProbeDisplacement(lockedApplied, candidate, probes)
+				: 0.0;
+
+			// Hysteretic deadband: a candidate has to be worth at least
+			// kDeadbandCoarse of movement to arm a correction, after which we track
+			// at kDeadbandFine resolution for a short while so the correction itself
+			// is not stepped. Pushing resets the reference, so this quantises the
+			// commanded transform rather than delaying it.
+			const double threshold = lockedFineTicks > 0 ? kDeadbandFine : kDeadbandCoarse;
+			const bool push = !lockedAppliedValid || !canMeasure || displacement > threshold;
+
+			if (displacement > kDeadbandCoarse)
+				lockedFineTicks = kDeadbandFineTicks;
+			else if (lockedFineTicks > 0)
+				lockedFineTicks--;
+
+			if (push)
+			{
+				// The locked transform is yaw-only by construction, so take the yaw
+				// directly instead of round-tripping through EulerRotation(), whose
+				// representation is ambiguous for large angles.
+				ctx.calibratedRotation = Eigen::Vector3d(0.0, calibration.LockedYawDegrees(), 0.0);
+				ctx.calibratedTranslation = candidate.translation() * 100.0; // cm units
+
+				// Ensure the device push isn't gated by stale enabled state. Normally
+				// ScanAndApplyProfile sets ctx.enabled, but once calibration.isValid()
+				// becomes true it stops being called, so set it here to match.
+				ctx.enabled = ctx.validProfile;
+
+				ApplyContinuousTransform(ctx, ids);
+
+				lockedApplied = candidate;
+				lockedAppliedValid = true;
+			}
 		}
 		return;
 	}
