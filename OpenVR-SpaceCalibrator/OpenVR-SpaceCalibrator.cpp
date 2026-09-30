@@ -13,6 +13,9 @@
 #include <GLFW/glfw3.h>
 #include <openvr.h>
 #include <direct.h>
+#include <chrono>
+#include <thread>
+
 
 #pragma comment(linker,"\"/manifestdependency:type='win32' \
 name='Microsoft.Windows.Common-Controls' version='6.0.0.0' \
@@ -57,6 +60,7 @@ static GLuint fboHandle = 0, fboTextureHandle = 0;
 static int fboTextureWidth = 0, fboTextureHeight = 0;
 
 static char cwd[MAX_PATH];
+const float MINIMIZED_MAX_FPS = 60.0f;
 
 void CreateGLFWWindow()
 {
@@ -212,6 +216,7 @@ void RequestImmediateRedraw() {
 	immediateRedraw = true;
 }
 
+double lastFrameStartTime = glfwGetTime();
 void RunLoop()
 {
 	while (!glfwWindowShouldClose(glfwWindow))
@@ -373,6 +378,19 @@ void RunLoop()
 		}
 
 		glfwWaitEventsTimeout(waitEventsTimeout);
+
+		// If we're minimized rendering won't limit our frame rate so we need to do it ourselves.
+		if (glfwGetWindowAttrib(glfwWindow, GLFW_ICONIFIED))
+		{
+			double targetFrameTime = 1 / MINIMIZED_MAX_FPS;
+			double waitTime = targetFrameTime - (glfwGetTime() - lastFrameStartTime);
+			if (waitTime > 0)
+			{
+				std::this_thread::sleep_for(std::chrono::duration<double>(waitTime));
+			}
+		
+			lastFrameStartTime += targetFrameTime;
+		}
 	}
 }
 
